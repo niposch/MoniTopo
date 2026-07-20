@@ -10,6 +10,9 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- WPF0001: ThemeMode is still marked experimental in .NET 10, but it is
+         the framework-provided Fluent system-theme API selected by the product spec. -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
