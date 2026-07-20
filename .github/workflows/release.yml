@@ -1,0 +1,65 @@
+name: Release candidate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Package version in YYYY.MDD.R form
+        required: true
+        default: '2026.720.0'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      CI: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.204
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Resolve and validate version
+        id: version
+        shell: pwsh
+        env:
+          DISPATCH_VERSION: ${{ inputs.package_version }}
+        run: |
+          $packageVersion = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.Substring(1) } else { $env:DISPATCH_VERSION }
+          $release = ./eng/Get-ReleaseVersion.ps1 -PackageVersion $packageVersion
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "package=$($release.PackageVersion)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "display=$($release.DisplayVersion)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tag=$($release.Tag)"
+      - name: Restore locked dependencies
+        run: dotnet restore MoniTopo.slnx --locked-mode
+      - name: Restore self-contained runtime packs
+        run: dotnet restore src/MoniTopo.App/MoniTopo.App.csproj --runtime win-x64 --locked-mode --no-dependencies -p:SelfContained=true
+      - name: Restore packaging tool
+        run: dotnet tool restore
+      - name: Verify formatting
+        run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
+      - name: Build
+        run: dotnet build MoniTopo.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.package }}
+      - name: Test without display mutation
+        run: dotnet test MoniTopo.slnx --configuration Release --no-build
+      - name: Publish win-x64
+        run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish -p:Version=${{ steps.version.outputs.package }}
+      - name: Download previous prerelease assets for deltas
+        continue-on-error: true
+        run: dotnet tool run vpk -- download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre true --outputDir artifacts/releases
+      - name: Build installer and portable package
+        shell: pwsh
+        run: ./eng/Pack-Release.ps1 -PackageVersion ${{ steps.version.outputs.package }} -PublishDirectory artifacts/publish -OutputDirectory artifacts/releases
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MoniTopo-${{ steps.version.outputs.package }}-release-candidate
+          path: artifacts/releases
+      - name: Create draft prerelease
+        run: dotnet tool run vpk -- upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre true --releaseName "MoniTopo ${{ steps.version.outputs.display }} release candidate" --tag ${{ steps.version.outputs.tag }} --targetCommitish ${{ github.sha }} --outputDir artifacts/releases
