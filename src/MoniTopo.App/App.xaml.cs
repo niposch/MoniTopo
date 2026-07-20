@@ -5,20 +5,25 @@ using MoniTopo.App.Interaction;
 using MoniTopo.App.Lifecycle;
 using MoniTopo.App.Popup;
 using MoniTopo.App.Profiles;
+using MoniTopo.App.Settings;
 using MoniTopo.App.State;
 using MoniTopo.App.Tray;
+using MoniTopo.App.Updates;
 using MoniTopo.Core.Activation;
 using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Persistence;
+using MoniTopo.Core.Updates;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
+using MoniTopo.Windows.Startup;
 
 namespace MoniTopo.App;
 
 public partial class App : System.Windows.Application, IDisposable
 {
+    private readonly CancellationTokenSource _shutdown = new();
     private SingleInstanceCoordinator? _singleInstance;
     private ApplicationMessageWindow? _messageWindow;
     private GlobalHotkeyService? _hotkeys;
@@ -26,11 +31,14 @@ public partial class App : System.Windows.Application, IDisposable
     private MainWindow? _mainWindow;
     private PopupWindow? _popupWindow;
     private ConfigurationSession? _configuration;
+    private StartupSettingsCoordinator? _startupSettings;
     private GuardedProfileActivator? _profileActivator;
     private DisplayStateRefreshService? _displayRefresh;
     private HotkeyCommandRouter? _hotkeyRouter;
     private ActivationInteractionController? _activationInteraction;
     private ActiveDisplayStateCoordinator? _activeDisplayState;
+    private UpdateCoordinator? _updates;
+    private Task? _updateCheckTask;
     private bool _exiting;
     private bool _disposed;
 
@@ -61,6 +69,34 @@ public partial class App : System.Windows.Application, IDisposable
         {
             _configuration = new ConfigurationSession(store, ApplicationConfiguration.CreateDefault());
             System.Windows.MessageBox.Show(exception.Message, "MoniTopo", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        var startupExecutable = StartupExecutable.Current();
+        var runAtLogin = new RunAtLoginService(
+            startupExecutable.Path,
+            startupExecutable.IsPortable,
+            new CurrentUserRunRegistry());
+        _startupSettings = new StartupSettingsCoordinator(_configuration, runAtLogin);
+        _updates = new UpdateCoordinator(new VelopackUpdateClient(), _configuration);
+        var isFirstRun = !_configuration.Current.ApplicationSettings.FirstRunCompleted;
+        if (isFirstRun)
+        {
+            var firstRunWindow = new FirstRunWindow(runAtLogin.Warning);
+            if (firstRunWindow.ShowDialog() == true)
+            {
+                try
+                {
+                    await _startupSettings.CompleteFirstRunAsync(firstRunWindow.StartAtLogin).ConfigureAwait(true);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    System.Windows.MessageBox.Show(
+                        $"MoniTopo could not save the sign-in preference. {exception.Message}",
+                        "MoniTopo",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
         }
 
         _mainWindow = new MainWindow();
@@ -97,6 +133,8 @@ public partial class App : System.Windows.Application, IDisposable
             _configuration,
             profileManagement,
             _activationInteraction,
+            _startupSettings,
+            _updates,
             (profileId, hotkey) => _hotkeys.RegisterProfile(profileId, hotkey));
         _activeDisplayState = new ActiveDisplayStateCoordinator(
             captureService,
@@ -118,8 +156,11 @@ public partial class App : System.Windows.Application, IDisposable
         SystemEvents.SessionSwitch += OnSessionSwitch;
         await _displayRefresh.RunConsistencyCheckAsync().ConfigureAwait(true);
 
-        var background = e.Args.Contains("--background", StringComparer.OrdinalIgnoreCase);
-        if (!background)
+        _popupWindow.ViewModel.UpdateAvailable = _updates.Current.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+        _updates.Changed += OnUpdateStateChanged;
+        _updateCheckTask = CheckForUpdatesAfterStartupAsync();
+
+        if (isFirstRun || _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch)
         {
             OpenMainWindow();
         }
@@ -139,13 +180,17 @@ public partial class App : System.Windows.Application, IDisposable
         }
 
         SystemEvents.SessionSwitch -= OnSessionSwitch;
+        _shutdown.Cancel();
+        _updateCheckTask?.GetAwaiter().GetResult();
         _displayRefresh?.BeginShutdown();
         _hotkeys?.Dispose();
         _messageWindow?.Dispose();
         _popupWindow?.Close();
         _tray?.Dispose();
         _profileActivator?.Dispose();
+        _updates?.Dispose();
         _configuration?.Dispose();
+        _shutdown.Dispose();
         if (_displayRefresh is not null)
         {
             _displayRefresh.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -201,6 +246,31 @@ public partial class App : System.Windows.Application, IDisposable
             {
                 _ = _displayRefresh.RunConsistencyCheckAsync();
             }
+        }
+    }
+
+    private void OnUpdateStateChanged(object? sender, UpdateState state) =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_popupWindow is not null)
+            {
+                _popupWindow.ViewModel.UpdateAvailable = state.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+            }
+        });
+
+    private async Task CheckForUpdatesAfterStartupAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), _shutdown.Token).ConfigureAwait(false);
+            if (_updates is not null && !_exiting)
+            {
+                await _updates.CheckAutomaticallyAsync(_shutdown.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            // Normal application shutdown cancels the delayed/background check.
         }
     }
 

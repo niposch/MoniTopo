@@ -9,14 +9,16 @@ public sealed record ApplicationSettings(
     HotkeyBinding PopupHotkey,
     bool UpdateChecksEnabled,
     WindowBounds? LastMainWindowBounds,
-    bool FirstRunCompleted)
+    bool FirstRunCompleted,
+    bool ShowMainWindowOnLaunch)
 {
     public static ApplicationSettings Default { get; } = new(
         RunAtLogin: true,
         PopupHotkey: new HotkeyBinding(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x4D),
         UpdateChecksEnabled: true,
         LastMainWindowBounds: null,
-        FirstRunCompleted: false);
+        FirstRunCompleted: false,
+        ShowMainWindowOnLaunch: false);
 }
 
 public sealed record ApplicationConfiguration(
@@ -27,7 +29,7 @@ public sealed record ApplicationConfiguration(
     Guid? LastActivatedProfileId,
     DateTimeOffset? LastUpdateCheckUtc)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public static ApplicationConfiguration CreateDefault() => new(
         CurrentSchemaVersion,

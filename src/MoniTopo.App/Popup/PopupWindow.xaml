@@ -78,7 +78,7 @@
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                 <TextBlock FontSize="11" Opacity="0.68">
-                                    <Run Text="▣ " /><Run Text="{Binding ActiveDisplayCount}" /><Run Text=" displays" />
+                                    <Run Text="▣ " /><Run Text="{Binding ActiveDisplayCount, Mode=OneWay}" /><Run Text=" displays" />
                                 </TextBlock>
                             </StackPanel>
                             <TextBlock Grid.Column="2"
@@ -101,6 +101,7 @@
                     Padding="12,8"
                     BorderThickness="0,1,0,0"
                     Visibility="{Binding UpdateAvailable, Converter={StaticResource BooleanToVisibility}}"
+                    Click="OnUpdateClick"
                     AutomationProperties.Name="Open update settings" />
 
             <Button Grid.Row="4"

@@ -145,6 +145,15 @@ public sealed class JsonConfigurationStore : IConfigurationStore
             root["applicationSettings"] ??= JsonSerializer.SerializeToNode(ApplicationSettings.Default, SerializerOptions);
             root["profiles"] ??= new JsonArray();
             root["profileOrder"] ??= new JsonArray();
+            schemaVersion = 1;
+        }
+
+        if (schemaVersion == 1)
+        {
+            var settings = root["applicationSettings"] as JsonObject
+                ?? throw new JsonException("The application settings must be an object.");
+            settings["showMainWindowOnLaunch"] ??= false;
+            root["schemaVersion"] = 2;
         }
 
         return root;

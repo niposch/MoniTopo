@@ -1,13 +1,16 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Navigation;
 using MoniTopo.App.Dialogs;
 using MoniTopo.App.Interaction;
 using MoniTopo.App.Profiles;
+using MoniTopo.App.Settings;
 using MoniTopo.App.State;
 using MoniTopo.Core.Activation;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Updates;
 using MoniTopo.Core.Validation;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
@@ -20,6 +23,8 @@ public partial class MainWindow : Window
     private MainWindowViewModel? _viewModel;
     private ProfileManagementService? _profiles;
     private ActivationInteractionController? _activation;
+    private StartupSettingsCoordinator? _startupSettings;
+    private UpdateCoordinator? _updates;
     private Func<Guid, HotkeyBinding?, HotkeyRegistrationResult>? _registerHotkey;
 
     public MainWindow()
@@ -31,12 +36,16 @@ public partial class MainWindow : Window
         ConfigurationSession configuration,
         ProfileManagementService profiles,
         ActivationInteractionController activation,
+        StartupSettingsCoordinator startupSettings,
+        UpdateCoordinator updates,
         Func<Guid, HotkeyBinding?, HotkeyRegistrationResult> registerHotkey)
     {
         _profiles = profiles;
         _activation = activation;
+        _startupSettings = startupSettings;
+        _updates = updates;
         _registerHotkey = registerHotkey;
-        _viewModel = new MainWindowViewModel(configuration);
+        _viewModel = new MainWindowViewModel(configuration, updates);
         DataContext = _viewModel;
     }
 
@@ -230,6 +239,73 @@ public partial class MainWindow : Window
         });
     }
 
+    private async void OnRunAtLoginClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox checkBox || _viewModel is null)
+        {
+            return;
+        }
+
+        var requested = checkBox.IsChecked == true;
+        await RunActionAsync(async () =>
+        {
+            await _startupSettings!.SetRunAtLoginAsync(requested).ConfigureAwait(true);
+            return requested ? "MoniTopo will start when you sign in." : "Sign-in startup disabled.";
+        });
+        checkBox.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, _viewModel.RunAtLogin);
+    }
+
+    private async void OnShowWindowOnLaunchClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox checkBox || _viewModel is null)
+        {
+            return;
+        }
+
+        var requested = checkBox.IsChecked == true;
+        await RunActionAsync(async () =>
+        {
+            await _startupSettings!.SetShowMainWindowOnLaunchAsync(requested).ConfigureAwait(true);
+            return requested
+                ? "The main window will open when MoniTopo starts."
+                : "MoniTopo will start in the tray.";
+        });
+        checkBox.SetCurrentValue(
+            System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty,
+            _viewModel.ShowMainWindowOnLaunch);
+    }
+
+    private async void OnAutomaticUpdatesClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox checkBox || _viewModel is null)
+        {
+            return;
+        }
+
+        var requested = checkBox.IsChecked == true;
+        await RunActionAsync(async () =>
+        {
+            await _updates!.SetAutomaticChecksEnabledAsync(requested).ConfigureAwait(true);
+            return requested ? "Daily update checks enabled." : "Automatic update checks disabled.";
+        });
+        checkBox.SetCurrentValue(
+            System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty,
+            _viewModel.UpdateChecksEnabled);
+    }
+
+    private async void OnCheckForUpdatesClick(object sender, RoutedEventArgs e) =>
+        await RunActionAsync(async () => (await _updates!.CheckNowAsync().ConfigureAwait(true)).Message);
+
+    private async void OnDownloadUpdateClick(object sender, RoutedEventArgs e) =>
+        await RunActionAsync(async () => (await _updates!.DownloadAsync().ConfigureAwait(true)).Message);
+
+    private async void OnInstallUpdateClick(object sender, RoutedEventArgs e) =>
+        await RunActionAsync(() =>
+        {
+            _updates!.InstallAndRestart();
+            return Task.FromResult("Starting the installer…");
+        });
+
     private void OnPreviewSizeChanged(object sender, SizeChangedEventArgs e) =>
         _viewModel?.SetPreviewSize(Math.Max(100, e.NewSize.Width - 2), Math.Max(100, e.NewSize.Height - 2));
 
@@ -256,7 +332,7 @@ public partial class MainWindow : Window
         {
             _viewModel.StatusMessage = await action().ConfigureAwait(true);
         }
-        catch (Exception exception) when (exception is ConfigurationValidationException or DisplayCaptureException or InvalidOperationException or KeyNotFoundException or ActivationFailureException)
+        catch (Exception exception) when (exception is ConfigurationValidationException or DisplayCaptureException or InvalidOperationException or KeyNotFoundException or ActivationFailureException or UpdateClientException or IOException or UnauthorizedAccessException)
         {
             _viewModel.StatusMessage = exception.Message;
         }

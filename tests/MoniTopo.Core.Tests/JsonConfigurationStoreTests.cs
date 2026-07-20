@@ -75,6 +75,34 @@ public sealed class JsonConfigurationStoreTests
         });
     }
 
+    [Fact]
+    public async Task SchemaOneDefaultsToStartingInTray()
+    {
+        await InTemporaryDirectory(async path =>
+        {
+            var configurationPath = Path.Combine(path, "config.json");
+            await File.WriteAllTextAsync(configurationPath, """
+                {
+                  "schemaVersion": 1,
+                  "applicationSettings": {
+                    "runAtLogin": true,
+                    "popupHotkey": { "modifiers": 3, "virtualKey": 77 },
+                    "updateChecksEnabled": true,
+                    "firstRunCompleted": true
+                  },
+                  "profiles": [],
+                  "profileOrder": []
+                }
+                """);
+            var store = new JsonConfigurationStore(configurationPath);
+
+            var configuration = await store.LoadAsync();
+
+            Assert.Equal(2, configuration.SchemaVersion);
+            Assert.False(configuration.ApplicationSettings.ShowMainWindowOnLaunch);
+        });
+    }
+
     private static async Task InTemporaryDirectory(Func<string, Task> action)
     {
         var path = Path.Combine(Path.GetTempPath(), "MoniTopo.Core.Tests", Guid.NewGuid().ToString("N"));

@@ -104,7 +104,8 @@
         "dependencies": {
           "MoniTopo.Core": "[1.0.0, )",
           "MoniTopo.Recovery": "[1.0.0, )",
-          "MoniTopo.Windows": "[1.0.0, )"
+          "MoniTopo.Windows": "[1.0.0, )",
+          "Velopack": "[1.2.0, )"
         }
       },
       "monitopo.core": {
@@ -122,6 +123,12 @@
         "dependencies": {
           "MoniTopo.Core": "[1.0.0, )"
         }
+      },
+      "Velopack": {
+        "type": "CentralTransitive",
+        "requested": "[1.2.0, )",
+        "resolved": "1.2.0",
+        "contentHash": "Rz67gJL619fSBS6omaSINUxyDuwhIxkm5mmubf7uLd5Qgi6LLKaKCha+QFP6n+Bw/UjA0vutnH4JQfYzn6ANtw=="
       }
     }
   }

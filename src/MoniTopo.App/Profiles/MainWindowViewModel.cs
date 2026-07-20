@@ -5,22 +5,29 @@ using System.Windows;
 using MoniTopo.App.State;
 using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Updates;
+using MoniTopo.Core.Versioning;
 
 namespace MoniTopo.App.Profiles;
 
 public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
     private readonly ConfigurationSession _configuration;
+    private readonly UpdateCoordinator _updates;
     private DisplayProfile? _selectedProfile;
     private string? _statusMessage;
     private bool _isBusy;
     private double _previewWidth = 560;
     private double _previewHeight = 260;
+    private UpdateState _updateState;
 
-    public MainWindowViewModel(ConfigurationSession configuration)
+    public MainWindowViewModel(ConfigurationSession configuration, UpdateCoordinator updates)
     {
         _configuration = configuration;
+        _updates = updates;
+        _updateState = updates.Current;
         _configuration.Changed += OnConfigurationChanged;
+        _updates.Changed += OnUpdateChanged;
         Reload(configuration.Current);
     }
 
@@ -65,6 +72,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool UpdateChecksEnabled => _configuration.Current.ApplicationSettings.UpdateChecksEnabled;
 
+    public bool ShowMainWindowOnLaunch => _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch;
+
+    public string CurrentVersionText => ReleaseVersion.TryParse(_updates.CurrentPackageVersion, out var version)
+        ? version.DisplayVersion
+        : "Development build";
+
+    public string UpdateStatusMessage => _updateState.Message;
+
+    public string? UpdateReleaseNotes => _updateState.Update?.ReleaseNotes;
+
+    public int UpdateProgressPercent => _updateState.ProgressPercent;
+
+    public bool CanCheckForUpdates => _updateState.Status is not UpdateStatus.Checking and not UpdateStatus.Downloading;
+
+    public bool CanDownloadUpdate => _updateState.Status == UpdateStatus.Available;
+
+    public bool CanInstallUpdate => _updateState.Status == UpdateStatus.ReadyToInstall;
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public void SetPreviewSize(double width, double height)
@@ -87,6 +112,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private void OnUpdateChanged(object? sender, UpdateState state)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(() => ApplyUpdateState(state));
+        }
+        else
+        {
+            ApplyUpdateState(state);
+        }
+    }
+
+    private void ApplyUpdateState(UpdateState state)
+    {
+        _updateState = state;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateStatusMessage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateReleaseNotes)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateProgressPercent)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanCheckForUpdates)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanDownloadUpdate)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanInstallUpdate)));
+    }
+
     private void Reload(ApplicationConfiguration configuration)
     {
         var selectedId = SelectedProfile?.Id;
@@ -103,6 +152,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         SelectedProfile = Profiles.FirstOrDefault(profile => profile.Id == selectedId) ?? Profiles.FirstOrDefault();
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RunAtLogin)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateChecksEnabled)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowMainWindowOnLaunch)));
     }
 
     private void RebuildPreview()

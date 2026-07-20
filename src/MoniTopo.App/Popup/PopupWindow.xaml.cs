@@ -79,6 +79,8 @@ public partial class PopupWindow : Window
         SettingsRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private void OnUpdateClick(object sender, RoutedEventArgs e) => OnSettingsClick(sender, e);
+
     private void OnDeactivated(object? sender, EventArgs e)
     {
         if (!ViewModel.IsBusy)

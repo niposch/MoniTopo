@@ -18,10 +18,13 @@ public sealed class MainWindowBindingTests
             {
                 var window = new MainWindow();
                 var settings = Descendants<CheckBox>((DependencyObject)window.Content)
-                    .Where(checkBox => checkBox.Content is "Run MoniTopo when I sign in" or "Check for updates automatically")
+                    .Where(checkBox => checkBox.Content is
+                        "Run MoniTopo when I sign in" or
+                        "Show the main window when MoniTopo starts" or
+                        "Check for updates automatically once per day")
                     .ToArray();
 
-                Assert.Equal(2, settings.Length);
+                Assert.Equal(3, settings.Length);
                 foreach (var checkBox in settings)
                 {
                     var binding = Assert.IsType<Binding>(
