@@ -1,0 +1,114 @@
+<Window x:Class="MoniTopo.App.Popup.PopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MoniTopo profiles"
+        Width="330"
+        MaxHeight="560"
+        SizeToContent="Height"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        PreviewKeyDown="OnPreviewKeyDown"
+        Deactivated="OnDeactivated">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibility" />
+    </Window.Resources>
+    <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+            BorderThickness="1"
+            Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+            CornerRadius="8"
+            Padding="0">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Margin="14,11,14,9">
+                <TextBlock Text="Current setup" FontSize="11" Opacity="0.7" />
+                <TextBlock Text="{Binding CurrentState}" FontSize="16" FontWeight="SemiBold" />
+            </StackPanel>
+
+            <Separator Grid.Row="0" VerticalAlignment="Bottom" />
+
+            <ListBox x:Name="ProfileList"
+                     Grid.Row="1"
+                     ItemsSource="{Binding Profiles}"
+                     SelectedIndex="{Binding SelectedIndex, Mode=TwoWay}"
+                     BorderThickness="0"
+                     Padding="4"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     MouseDoubleClick="OnProfileDoubleClick">
+                <ListBox.Style>
+                    <Style TargetType="ListBox">
+                        <Setter Property="IsEnabled" Value="True" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                <Setter Property="IsEnabled" Value="False" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListBox.Style>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="8,7" />
+                        <Setter Property="MinHeight" Value="44" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="18" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="●"
+                                       FontSize="9"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsActive, Converter={StaticResource BooleanToVisibility}}"
+                                       AutomationProperties.Name="Active profile" />
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                <TextBlock FontSize="11" Opacity="0.68">
+                                    <Run Text="▣ " /><Run Text="{Binding ActiveDisplayCount}" /><Run Text=" displays" />
+                                </TextBlock>
+                            </StackPanel>
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding HotkeyText}"
+                                       Margin="12,0,2,0"
+                                       Opacity="0.65"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Border Grid.Row="2" Padding="12,8" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+                <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+            </Border>
+
+            <Button Grid.Row="3"
+                    Content="Update available"
+                    HorizontalContentAlignment="Left"
+                    Padding="12,8"
+                    BorderThickness="0,1,0,0"
+                    Visibility="{Binding UpdateAvailable, Converter={StaticResource BooleanToVisibility}}"
+                    AutomationProperties.Name="Open update settings" />
+
+            <Button Grid.Row="4"
+                    Content="Settings"
+                    HorizontalContentAlignment="Left"
+                    Padding="12,9"
+                    BorderThickness="0,1,0,0"
+                    Click="OnSettingsClick" />
+        </Grid>
+    </Border>
+</Window>
