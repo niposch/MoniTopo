@@ -23,6 +23,8 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
       - name: Restore locked dependencies
         run: dotnet restore MoniTopo.slnx --locked-mode
+      - name: Restore self-contained runtime packs
+        run: dotnet restore src/MoniTopo.App/MoniTopo.App.csproj --runtime win-x64 --locked-mode --no-dependencies -p:SelfContained=true
       - name: Verify formatting
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
       - name: Build
