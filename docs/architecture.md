@@ -45,3 +45,9 @@ Windows does not document request types `-3` and `-4`, despite Windows Settings 
 - [lihas/windows-DPI-scaling-sample](https://github.com/lihas/windows-DPI-scaling-sample/blob/master/DPIHelper/DpiHelper.h)
 
 The capture milestone imports no `SetDisplayConfig` or `DisplayConfigSetDeviceInfo` entry point. Setter work belongs to the guarded activation milestone.
+
+## Derived active state and refresh events
+
+Identity resolution produces a deterministic one-to-one map before profile comparison. Active matching then compares the exact active set and every managed property; it never trusts the last button pressed. See [display identity](display-identity.md) for the scoring and alternative-assignment ambiguity check.
+
+Windows display, device, and settings messages feed `DisplayStateRefreshService`. Bursts are debounced for 350 ms, refreshes are serialized, and a 15-second fallback consistency check covers driver changes that emit no useful message. Polling and pending work are suppressed while the session is locked or the app is shutting down. A changed state becomes `Custom`; the refresh service has no activation path.

@@ -13,6 +13,9 @@ internal interface IMonitorIdentityProvider
 internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
 {
     private static readonly Guid MonitorInterfaceClass = new("E6F07B5F-EE97-4A90-B076-33F57BF4EAA7");
+    private static readonly NativeDevicePropertyKey ContainerIdProperty = new(
+        new Guid("8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C"),
+        2);
     private const uint PresentDevice = 0x2;
     private const uint DeviceInterface = 0x10;
     private const uint GlobalScope = 0x1;
@@ -27,7 +30,7 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
         return new MonitorIdentityFingerprint(
             MonitorDevicePath: EmptyToNull(targetName.DevicePath),
             DeviceInstanceId: setupIdentity.DeviceInstanceId,
-            DeviceContainerId: null,
+            DeviceContainerId: setupIdentity.DeviceContainerId,
             EdidSerial: parsedEdid.Serial,
             EdidManufacturerId: parsedEdid.ManufacturerId ?? DecodeCcdManufacturer(targetName.EdidManufacturerId),
             EdidProductCode: parsedEdid.ProductCode ?? targetName.EdidProductCode,
@@ -40,7 +43,7 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
             SupportedModeSignature: parsedEdid.ModeSignature);
     }
 
-    private static unsafe (string? DeviceInstanceId, byte[]? Edid) FindSetupIdentity(string monitorPath)
+    private static unsafe (string? DeviceInstanceId, string? DeviceContainerId, byte[]? Edid) FindSetupIdentity(string monitorPath)
     {
         var deviceSet = SetupApiNativeMethods.GetClassDevices(
             MonitorInterfaceClass,
@@ -112,7 +115,7 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
                             checked((uint)instanceIdBuffer.Length),
                             out _);
                         var instanceId = hasInstanceId ? new string(instanceIdPointer) : null;
-                        return (instanceId, ReadEdid(deviceSet, ref deviceInfo));
+                        return (instanceId, ReadContainerId(deviceSet, ref deviceInfo), ReadEdid(deviceSet, ref deviceInfo));
                     }
                 }
                 finally
@@ -126,6 +129,24 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
         finally
         {
             _ = SetupApiNativeMethods.DestroyDeviceInfoList(deviceSet);
+        }
+    }
+
+    private static unsafe string? ReadContainerId(nint deviceSet, ref NativeDeviceInfoData deviceInfo)
+    {
+        Span<byte> buffer = stackalloc byte[16];
+        fixed (byte* bufferPointer = buffer)
+        {
+            var success = SetupApiNativeMethods.GetDeviceProperty(
+                deviceSet,
+                ref deviceInfo,
+                ContainerIdProperty,
+                out _,
+                bufferPointer,
+                checked((uint)buffer.Length),
+                out var requiredSize,
+                flags: 0);
+            return success && requiredSize == 16 ? new Guid(buffer).ToString("D") : null;
         }
     }
 

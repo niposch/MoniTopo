@@ -20,6 +20,9 @@ internal struct NativeDeviceInfoData
     internal nint Reserved;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct NativeDevicePropertyKey(Guid FormatId, uint PropertyId);
+
 internal static partial class SetupApiNativeMethods
 {
     [LibraryImport("setupapi.dll", EntryPoint = "SetupDiGetClassDevsW", SetLastError = true)]
@@ -52,6 +55,18 @@ internal static partial class SetupApiNativeMethods
         char* deviceInstanceId,
         uint deviceInstanceIdSize,
         out uint requiredSize);
+
+    [LibraryImport("setupapi.dll", EntryPoint = "SetupDiGetDevicePropertyW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static unsafe partial bool GetDeviceProperty(
+        nint deviceInfoSet,
+        ref NativeDeviceInfoData deviceInfoData,
+        in NativeDevicePropertyKey propertyKey,
+        out uint propertyType,
+        byte* propertyBuffer,
+        uint propertyBufferSize,
+        out uint requiredSize,
+        uint flags);
 
     [LibraryImport("setupapi.dll", EntryPoint = "SetupDiOpenDevRegKey", SetLastError = true)]
     internal static partial nint OpenDeviceRegistryKey(
