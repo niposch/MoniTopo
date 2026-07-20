@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
+using MoniTopo.App.Diagnostics;
 using MoniTopo.App.Interaction;
 using MoniTopo.App.Lifecycle;
 using MoniTopo.App.Popup;
@@ -39,6 +40,7 @@ public partial class App : System.Windows.Application, IDisposable
     private ActiveDisplayStateCoordinator? _activeDisplayState;
     private UpdateCoordinator? _updates;
     private Task? _updateCheckTask;
+    private LocalDiagnosticLog? _diagnosticLog;
     private bool _exiting;
     private bool _disposed;
 
@@ -56,10 +58,14 @@ public partial class App : System.Windows.Application, IDisposable
         _singleInstance.OpenRequested += OnOpenRequested;
         _singleInstance.StartListening();
 
-        var configurationPath = Path.Combine(
+        var applicationDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MoniTopo",
-            "config.json");
+            "MoniTopo");
+        _diagnosticLog = new LocalDiagnosticLog(Path.Combine(applicationDataPath, "logs"));
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        var configurationPath = Path.Combine(applicationDataPath, "config.json");
         var store = new JsonConfigurationStore(configurationPath);
         try
         {
@@ -67,6 +73,7 @@ public partial class App : System.Windows.Application, IDisposable
         }
         catch (ConfigurationLoadException exception)
         {
+            _diagnosticLog.Write("Configuration", exception);
             _configuration = new ConfigurationSession(store, ApplicationConfiguration.CreateDefault());
             System.Windows.MessageBox.Show(exception.Message, "MoniTopo", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -90,6 +97,7 @@ public partial class App : System.Windows.Application, IDisposable
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
+                    _diagnosticLog.Write("FirstRun", exception);
                     System.Windows.MessageBox.Show(
                         $"MoniTopo could not save the sign-in preference. {exception.Message}",
                         "MoniTopo",
@@ -135,6 +143,7 @@ public partial class App : System.Windows.Application, IDisposable
             _activationInteraction,
             _startupSettings,
             _updates,
+            (area, exception) => _diagnosticLog.Write(area, exception),
             (profileId, hotkey) => _hotkeys.RegisterProfile(profileId, hotkey));
         _activeDisplayState = new ActiveDisplayStateCoordinator(
             captureService,
@@ -180,6 +189,9 @@ public partial class App : System.Windows.Application, IDisposable
         }
 
         SystemEvents.SessionSwitch -= OnSessionSwitch;
+        DispatcherUnhandledException -= OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException -= OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
         _shutdown.Cancel();
         _updateCheckTask?.GetAwaiter().GetResult();
         _displayRefresh?.BeginShutdown();
@@ -232,6 +244,23 @@ public partial class App : System.Windows.Application, IDisposable
     }
 
     private void OnOpenRequested(object? sender, EventArgs eventArgs) => Dispatcher.BeginInvoke(OpenMainWindow);
+
+    private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs eventArgs) =>
+        _diagnosticLog?.Write("Dispatcher", eventArgs.Exception);
+
+    private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs eventArgs)
+    {
+        if (eventArgs.ExceptionObject is Exception exception)
+        {
+            _diagnosticLog?.Write("Process", exception);
+        }
+    }
+
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs eventArgs)
+    {
+        _diagnosticLog?.Write("Task", eventArgs.Exception);
+        eventArgs.SetObserved();
+    }
 
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs eventArgs)
     {

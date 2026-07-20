@@ -24,6 +24,8 @@ The Windows tests construct CCD path/mode arrays, rollback files, EDID bytes, HD
 
 WPF startup smoke tests show and lay out the first-run, popup, and main windows on STA threads with fake configuration and update services. These tests catch invalid binding modes without invoking a display writer.
 
+CI enforces at least 85% line coverage for `MoniTopo.Core`. `eng/Test-CoreCoverage.ps1` reads the isolated Core Cobertura report; the current local baseline is 88.69%. Windows and application coverage is retained as an artifact for review but is not used to hide platform or UI code behind exclusions.
+
 ## Local packaging
 
 Velopack 1.2.0 is pinned in the local tool manifest and application package reference. Publish and package a release candidate with:

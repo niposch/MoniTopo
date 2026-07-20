@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private ActivationInteractionController? _activation;
     private StartupSettingsCoordinator? _startupSettings;
     private UpdateCoordinator? _updates;
+    private Action<string, Exception>? _logError;
     private Func<Guid, HotkeyBinding?, HotkeyRegistrationResult>? _registerHotkey;
 
     public MainWindow()
@@ -38,12 +39,14 @@ public partial class MainWindow : Window
         ActivationInteractionController activation,
         StartupSettingsCoordinator startupSettings,
         UpdateCoordinator updates,
+        Action<string, Exception> logError,
         Func<Guid, HotkeyBinding?, HotkeyRegistrationResult> registerHotkey)
     {
         _profiles = profiles;
         _activation = activation;
         _startupSettings = startupSettings;
         _updates = updates;
+        _logError = logError;
         _registerHotkey = registerHotkey;
         _viewModel = new MainWindowViewModel(configuration, updates);
         DataContext = _viewModel;
@@ -334,6 +337,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is ConfigurationValidationException or DisplayCaptureException or InvalidOperationException or KeyNotFoundException or ActivationFailureException or UpdateClientException or IOException or UnauthorizedAccessException)
         {
+            _logError?.Invoke("MainWindow", exception);
             _viewModel.StatusMessage = exception.Message;
         }
         finally

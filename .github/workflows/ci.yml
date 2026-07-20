@@ -31,8 +31,15 @@ jobs:
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
       - name: Build
         run: dotnet build MoniTopo.slnx --configuration Release --no-restore
-      - name: Test without display mutation
-        run: dotnet test MoniTopo.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage
+      - name: Test Core with coverage
+        run: dotnet test tests/MoniTopo.Core.Tests/MoniTopo.Core.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/core
+      - name: Enforce Core coverage
+        shell: pwsh
+        run: ./eng/Test-CoreCoverage.ps1 -CoverageDirectory artifacts/coverage/core
+      - name: Test Windows adapters without display mutation
+        run: dotnet test tests/MoniTopo.Windows.Tests/MoniTopo.Windows.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/windows
+      - name: Test application without display mutation
+        run: dotnet test tests/MoniTopo.App.Tests/MoniTopo.App.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/app
       - name: Publish smoke artifact
         run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish
       - name: Validate Velopack packaging
@@ -44,3 +51,4 @@ jobs:
           path: |
             artifacts/publish
             artifacts/releases
+            artifacts/coverage

@@ -47,8 +47,15 @@ jobs:
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
       - name: Build
         run: dotnet build MoniTopo.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.package }}
-      - name: Test without display mutation
-        run: dotnet test MoniTopo.slnx --configuration Release --no-build
+      - name: Test Core with coverage
+        run: dotnet test tests/MoniTopo.Core.Tests/MoniTopo.Core.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/core
+      - name: Enforce Core coverage
+        shell: pwsh
+        run: ./eng/Test-CoreCoverage.ps1 -CoverageDirectory artifacts/coverage/core
+      - name: Test Windows adapters without display mutation
+        run: dotnet test tests/MoniTopo.Windows.Tests/MoniTopo.Windows.Tests.csproj --configuration Release --no-build
+      - name: Test application without display mutation
+        run: dotnet test tests/MoniTopo.App.Tests/MoniTopo.App.Tests.csproj --configuration Release --no-build
       - name: Publish win-x64
         run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish -p:Version=${{ steps.version.outputs.package }}
       - name: Download previous prerelease assets for deltas
