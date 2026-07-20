@@ -15,8 +15,8 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.204
           cache: true
@@ -33,7 +33,7 @@ jobs:
         run: dotnet test MoniTopo.slnx --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage
       - name: Publish smoke artifact
         run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: MoniTopo-win-x64-smoke
           path: artifacts/publish
