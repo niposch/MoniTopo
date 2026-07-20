@@ -1,0 +1,31 @@
+/MONITOPO_PROJECT_SPEC.private.md
+
+# Build output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# IDE and user state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Packages, local state, logs, and recovery payloads
+packages/
+*.nupkg
+*.snupkg
+*.log
+*.tmp
+*.bak
+*.recovery.json
+/Releases/
+
+# OS files
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MoniTopo.App/MoniTopo.App.csproj" />
+    <Project Path="src/MoniTopo.Core/MoniTopo.Core.csproj" />
+    <Project Path="src/MoniTopo.Recovery/MoniTopo.Recovery.csproj" />
+    <Project Path="src/MoniTopo.Windows/MoniTopo.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MoniTopo.App.Tests/MoniTopo.App.Tests.csproj" />
+    <Project Path="tests/MoniTopo.Core.Tests/MoniTopo.Core.Tests.csproj" />
+    <Project Path="tests/MoniTopo.Windows.Tests/MoniTopo.Windows.Tests.csproj" />
+  </Folder>
+</Solution>
