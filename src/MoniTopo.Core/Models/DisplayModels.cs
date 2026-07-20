@@ -74,6 +74,15 @@ public enum DisplayOutputTechnology
     Other = 7,
 }
 
+public sealed record DisplayTargetSignal(
+    ulong PixelRate,
+    RefreshRate HorizontalSyncFrequency,
+    RefreshRate VerticalSyncFrequency,
+    DisplaySize ActiveSize,
+    DisplaySize TotalSize,
+    uint VideoStandard,
+    uint ScanLineOrdering);
+
 public sealed record MonitorIdentityFingerprint(
     string? MonitorDevicePath,
     string? DeviceInstanceId,
@@ -113,7 +122,10 @@ public sealed record DesiredDisplayPath(
     int WindowsUiScalePercent,
     bool HdrEnabled,
     bool IsPrimary,
-    string FriendlyLabel);
+    string FriendlyLabel)
+{
+    public DisplayTargetSignal? TargetSignal { get; init; }
+}
 
 public sealed record ConnectedDisplayState(
     string RuntimeId,

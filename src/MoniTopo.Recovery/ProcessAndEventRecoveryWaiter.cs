@@ -9,33 +9,47 @@ internal sealed class ProcessAndEventRecoveryWaiter(TimeProvider? timeProvider =
 
     public async Task<RecoveryWaitOutcome> WaitAsync(RecoveryPayload payload, CancellationToken cancellationToken)
     {
-        using var successEvent = EventWaitHandle.OpenExisting(payload.SuccessEventName);
-        Process? mainProcess;
+        EventWaitHandle successEvent;
         try
         {
-            mainProcess = Process.GetProcessById(payload.MainProcessId);
+            successEvent = EventWaitHandle.OpenExisting(payload.SuccessEventName);
         }
-        catch (ArgumentException)
+        catch (WaitHandleCannotBeOpenedException)
         {
             return RecoveryWaitOutcome.MainProcessExited;
         }
 
-        using (mainProcess)
+        using (successEvent)
         {
-            while (_timeProvider.GetUtcNow() < payload.ExpiresUtc)
+            using var readyEvent = EventWaitHandle.OpenExisting(payload.ReadyEventName);
+            readyEvent.Set();
+            Process? mainProcess;
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (successEvent.WaitOne(TimeSpan.Zero))
-                {
-                    return RecoveryWaitOutcome.SuccessSignaled;
-                }
+                mainProcess = Process.GetProcessById(payload.MainProcessId);
+            }
+            catch (ArgumentException)
+            {
+                return RecoveryWaitOutcome.MainProcessExited;
+            }
 
-                if (mainProcess.HasExited)
+            using (mainProcess)
+            {
+                while (_timeProvider.GetUtcNow() < payload.ExpiresUtc)
                 {
-                    return RecoveryWaitOutcome.MainProcessExited;
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (successEvent.WaitOne(TimeSpan.Zero))
+                    {
+                        return RecoveryWaitOutcome.SuccessSignaled;
+                    }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(200), _timeProvider, cancellationToken).ConfigureAwait(false);
+                    if (mainProcess.HasExited)
+                    {
+                        return RecoveryWaitOutcome.MainProcessExited;
+                    }
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(200), _timeProvider, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
 

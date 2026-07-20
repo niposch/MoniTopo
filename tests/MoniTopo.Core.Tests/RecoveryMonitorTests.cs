@@ -94,6 +94,7 @@ public sealed class RecoveryMonitorTests
             Guid.Parse("20000000-0000-0000-0000-000000000001"),
             Environment.ProcessId,
             "synthetic-event",
+            "synthetic-ready-event",
             DateTimeOffset.UtcNow.AddSeconds(10),
             "rollback.bin");
         await File.WriteAllTextAsync(paths.PayloadPath, JsonSerializer.Serialize(payload, SerializerOptions));

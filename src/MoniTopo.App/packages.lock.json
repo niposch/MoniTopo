@@ -5,6 +5,13 @@
       "monitopo.core": {
         "type": "Project"
       },
+      "monitopo.recovery": {
+        "type": "Project",
+        "dependencies": {
+          "MoniTopo.Core": "[1.0.0, )",
+          "MoniTopo.Windows": "[1.0.0, )"
+        }
+      },
       "monitopo.windows": {
         "type": "Project",
         "dependencies": {

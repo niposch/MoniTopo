@@ -49,7 +49,7 @@ public sealed record ActivationResult(
 
 public sealed record ActivationRollbackSnapshot(Guid TransactionId, int SchemaVersion, string DataPath);
 
-public sealed class ActivationFailureException(string errorCode, string message, Exception? innerException = null)
+public class ActivationFailureException(string errorCode, string message, Exception? innerException = null)
     : Exception(message, innerException)
 {
     public string ErrorCode { get; } = errorCode;
@@ -60,6 +60,8 @@ public interface IDisplayActivationBackend
     Task<CapturedDisplaySnapshot> QueryCurrentAsync(CancellationToken cancellationToken);
 
     Task<ActivationRollbackSnapshot> CaptureRollbackSnapshotAsync(CancellationToken cancellationToken);
+
+    Task DiscardRollbackSnapshotAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken);
 
     Task PreflightAsync(
         DisplayProfile profile,
@@ -227,8 +229,19 @@ public sealed class ProfileActivationService(
 
                 if (recoverySession is not null)
                 {
-                    await recoverySession.SignalFailureHandledAsync(rollbackSucceeded, CancellationToken.None).ConfigureAwait(false);
+                    try
+                    {
+                        await recoverySession.SignalFailureHandledAsync(rollbackSucceeded, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // The independent recovery timeout remains the final safety net.
+                    }
                 }
+            }
+            else if (rollbackSnapshot is not null)
+            {
+                await backend.DiscardRollbackSnapshotAsync(rollbackSnapshot, CancellationToken.None).ConfigureAwait(false);
             }
 
             var message = rollbackAttempted && rollbackSucceeded
@@ -247,7 +260,14 @@ public sealed class ProfileActivationService(
         {
             if (recoverySession is not null)
             {
-                await recoverySession.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    await recoverySession.DisposeAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Activation has already reached a terminal result.
+                }
             }
 
             _activationGate.Release();

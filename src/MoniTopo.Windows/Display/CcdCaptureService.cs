@@ -14,6 +14,7 @@ public sealed class CcdCaptureService : IDisplayCaptureService
     private const uint QueryVirtualRefreshRateAware = 0x40;
     private const uint ActivePath = 0x1;
     private const uint SourceModeType = 1;
+    private const uint TargetModeType = 2;
     private readonly IDisplayConfigNativeFacade _native;
     private readonly IDisplayScaleService _scaleService;
     private readonly IMonitorIdentityProvider _identityProvider;
@@ -95,6 +96,12 @@ public sealed class CcdCaptureService : IDisplayCaptureService
                 throw new DisplayCaptureException(0, "Windows returned an incomplete source mode for an active display.");
             }
 
+            var targetModeIndex = checked((int)path.TargetInfo.TargetModeInfoIndex);
+            if (targetModeIndex < 0 || targetModeIndex >= raw.Modes.Length || raw.Modes[targetModeIndex].InfoType != TargetModeType)
+            {
+                throw new DisplayCaptureException(0, "Windows returned an incomplete target signal for an active display.");
+            }
+
             var scale = _scaleService.Query(new DisplaySourceAddress(
                 path.SourceInfo.AdapterId.LowPart,
                 path.SourceInfo.AdapterId.HighPart,
@@ -111,6 +118,7 @@ public sealed class CcdCaptureService : IDisplayCaptureService
             var isPrimary = !primaryAssigned && primarySources.Contains(sourceKey);
             primaryAssigned |= isPrimary;
             var displayId = $"display-{index + 1}";
+            var targetSignal = raw.Modes[targetModeIndex].Mode.TargetMode.TargetVideoSignalInfo;
             activePaths.Add(new DesiredDisplayPath(
                 DisplayId: displayId,
                 Identity: target.Identity,
@@ -124,7 +132,17 @@ public sealed class CcdCaptureService : IDisplayCaptureService
                 WindowsUiScalePercent: scale.CurrentPercent.Value,
                 HdrEnabled: color.IsSupported && color.IsEnabled && !color.IsForceDisabled,
                 IsPrimary: isPrimary,
-                FriendlyLabel: string.IsNullOrWhiteSpace(target.Name.FriendlyName) ? $"Display {index + 1}" : target.Name.FriendlyName));
+                FriendlyLabel: string.IsNullOrWhiteSpace(target.Name.FriendlyName) ? $"Display {index + 1}" : target.Name.FriendlyName)
+            {
+                TargetSignal = new DisplayTargetSignal(
+                    targetSignal.PixelRate,
+                    new RefreshRate(targetSignal.HorizontalSyncFrequency.Numerator, targetSignal.HorizontalSyncFrequency.Denominator),
+                    new RefreshRate(targetSignal.VerticalSyncFrequency.Numerator, targetSignal.VerticalSyncFrequency.Denominator),
+                    new DisplaySize(checked((int)targetSignal.ActiveSize.Width), checked((int)targetSignal.ActiveSize.Height)),
+                    new DisplaySize(checked((int)targetSignal.TotalSize.Width), checked((int)targetSignal.TotalSize.Height)),
+                    targetSignal.VideoStandard,
+                    targetSignal.ScanLineOrdering),
+            });
         }
 
         var activeByTarget = activeNativePaths

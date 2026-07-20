@@ -4,6 +4,12 @@
     "net10.0-windows7.0": {
       "monitopo.core": {
         "type": "Project"
+      },
+      "monitopo.windows": {
+        "type": "Project",
+        "dependencies": {
+          "MoniTopo.Core": "[1.0.0, )"
+        }
       }
     },
     "net10.0-windows7.0/win-x64": {}

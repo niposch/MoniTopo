@@ -15,6 +15,7 @@ public sealed record RecoveryPayload(
     Guid TransactionId,
     int MainProcessId,
     string SuccessEventName,
+    string ReadyEventName,
     DateTimeOffset ExpiresUtc,
     string RollbackDataFileName);
 

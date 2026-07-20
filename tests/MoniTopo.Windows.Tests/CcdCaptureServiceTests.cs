@@ -26,6 +26,7 @@ public sealed class CcdCaptureServiceTests
         Assert.Equal(new DisplayPoint(2560, 0), snapshot.ActivePaths[1].Position);
         Assert.Equal(100, snapshot.ActivePaths[0].WindowsUiScalePercent);
         Assert.Equal(150, snapshot.ActivePaths[1].WindowsUiScalePercent);
+        Assert.Equal(241_500_000UL, snapshot.ActivePaths[0].TargetSignal?.PixelRate);
         Assert.Contains(snapshot.ConnectedDisplays, display => !display.IsActive);
         Assert.Equal(new DateTimeOffset(2026, 7, 20, 15, 0, 0, TimeSpan.Zero), snapshot.CapturedUtc);
     }
@@ -131,11 +132,13 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
         {
             SourceMode(adapter, sourceId: 0, modeIndex: 0, x: 0),
             SourceMode(adapter, sourceId: 1, modeIndex: 1, x: 2560),
+            TargetMode(adapter, targetId: 0),
+            TargetMode(adapter, targetId: 1),
         };
         var paths = new[]
         {
-            Path(adapter, sourceId: 0, targetId: 0, sourceModeIndex: 0, active: true),
-            Path(adapter, sourceId: 1, targetId: 1, sourceModeIndex: 1, active: true),
+            Path(adapter, sourceId: 0, targetId: 0, sourceModeIndex: 0, targetModeIndex: 2, active: true),
+            Path(adapter, sourceId: 1, targetId: 1, sourceModeIndex: 1, targetModeIndex: 3, active: true),
             Path(adapter, sourceId: 2, targetId: 2, sourceModeIndex: 0, active: false),
         };
         return new FakeDisplayNative { Snapshot = new NativeDisplaySnapshot(paths, modes) };
@@ -157,12 +160,35 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
         },
     };
 
+    private static NativeModeInfo TargetMode(NativeAdapterId adapter, uint targetId) => new()
+    {
+        InfoType = 2,
+        Id = targetId,
+        AdapterId = adapter,
+        Mode = new NativeModeUnion
+        {
+            TargetMode = new NativeTargetMode
+            {
+                TargetVideoSignalInfo = new NativeVideoSignalInfo
+                {
+                    PixelRate = 241_500_000,
+                    HorizontalSyncFrequency = new NativeRational(88_787, 1),
+                    VerticalSyncFrequency = new NativeRational(60, 1),
+                    ActiveSize = new NativeRegion(2560, 1440),
+                    TotalSize = new NativeRegion(2720, 1481),
+                    ScanLineOrdering = 1,
+                },
+            },
+        },
+    };
+
     private static NativePathInfo Path(
         NativeAdapterId adapter,
         uint sourceId,
         uint targetId,
         uint sourceModeIndex,
-        bool active) => new()
+        bool active,
+        uint targetModeIndex = 0) => new()
         {
             SourceInfo = new NativePathSourceInfo
             {
@@ -174,6 +200,7 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
             {
                 AdapterId = adapter,
                 Id = targetId,
+                ModeInfoIndex = targetModeIndex << 16,
                 OutputTechnology = 10,
                 Rotation = 1,
                 Scaling = 1,

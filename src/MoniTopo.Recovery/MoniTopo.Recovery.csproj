@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MoniTopo.Core\MoniTopo.Core.csproj" />
+    <ProjectReference Include="..\MoniTopo.Windows\MoniTopo.Windows.csproj" />
   </ItemGroup>
 
 </Project>

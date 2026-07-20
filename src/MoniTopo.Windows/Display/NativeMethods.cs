@@ -16,6 +16,14 @@ internal static partial class NativeMethods
         NativeModeInfo* modes,
         nint currentTopologyId);
 
+    [LibraryImport("user32.dll")]
+    internal static unsafe partial int SetDisplayConfig(
+        uint pathCount,
+        NativePathInfo* paths,
+        uint modeCount,
+        NativeModeInfo* modes,
+        uint flags);
+
     [LibraryImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
     internal static partial int GetTargetDeviceName(ref NativeTargetDeviceName packet);
 
@@ -30,6 +38,15 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
     internal static partial int GetDpiScale(ref NativeDpiScaleGet packet);
+
+    [LibraryImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
+    internal static partial int SetDpiScale(ref NativeDpiScaleSet packet);
+
+    [LibraryImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
+    internal static partial int SetAdvancedColorState(ref NativeAdvancedColorStateSet packet);
+
+    [LibraryImport("user32.dll")]
+    internal static partial int GetSystemMetrics(int index);
 
     [LibraryImport("user32.dll", EntryPoint = "EnumDisplayDevicesW")]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -43,6 +43,21 @@ public sealed class ProfileActivationServiceTests
         Assert.False(result.MutationBegan);
     }
 
+    [Fact]
+    public async Task ValidationFailureDiscardsUnusedRollbackSnapshot()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile)) { FailingCall = "validate" };
+        var service = CreateService(backend);
+
+        var result = await service.ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.False(result.MutationBegan);
+        Assert.Contains("discard-snapshot", backend.Calls);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+    }
+
     [Theory]
     [InlineData("scale")]
     [InlineData("hdr")]
@@ -163,6 +178,12 @@ public sealed class ProfileActivationServiceTests
         {
             Calls.Add("snapshot");
             return Task.FromResult(new ActivationRollbackSnapshot(Guid.NewGuid(), 1, "synthetic.rollback"));
+        }
+
+        public Task DiscardRollbackSnapshotAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken)
+        {
+            Calls.Add("discard-snapshot");
+            return Task.CompletedTask;
         }
 
         public Task PreflightAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken) =>

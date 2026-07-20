@@ -55,4 +55,30 @@ public sealed class DisplayScaleServiceTests
         Assert.False(result.IsSupported);
         Assert.Contains("unrecognized", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void DesiredPercentageMapsBackToRelativeSetterIndex()
+    {
+        var packet = new NativeDpiScaleGet
+        {
+            MinimumRelativeScale = -2,
+            CurrentRelativeScale = 0,
+            MaximumRelativeScale = 5,
+        };
+
+        var supported = DisplayScaleService.TryResolveRelativeScale(packet, 175, out var relativeScale);
+        var unsupported = DisplayScaleService.TryResolveRelativeScale(packet, 500, out _);
+        var malformedPacket = new NativeDpiScaleGet
+        {
+            MinimumRelativeScale = -20,
+            CurrentRelativeScale = 0,
+            MaximumRelativeScale = 20,
+        };
+        var malformed = DisplayScaleService.TryResolveRelativeScale(malformedPacket, 100, out _);
+
+        Assert.True(supported);
+        Assert.Equal(1, relativeScale);
+        Assert.False(unsupported);
+        Assert.False(malformed);
+    }
 }

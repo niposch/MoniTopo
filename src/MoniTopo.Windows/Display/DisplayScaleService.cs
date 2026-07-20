@@ -68,4 +68,28 @@ public sealed class DisplayScaleService : IDisplayScaleService
             SupportedPercentages: values[..(maximumIndex + 1)],
             ErrorMessage: null);
     }
+
+    internal static bool TryResolveRelativeScale(
+        NativeDpiScaleGet packet,
+        int desiredPercent,
+        out int relativeScale)
+    {
+        var desiredIndex = Array.IndexOf(UndocumentedDpiScaleContract.ScalePercentages, desiredPercent);
+        var recommendedIndex = -packet.MinimumRelativeScale;
+        var currentIndex = packet.CurrentRelativeScale - packet.MinimumRelativeScale;
+        var maximumIndex = packet.MaximumRelativeScale - packet.MinimumRelativeScale;
+        if (recommendedIndex < 0 ||
+            currentIndex < 0 ||
+            maximumIndex < currentIndex ||
+            maximumIndex >= UndocumentedDpiScaleContract.ScalePercentages.Length ||
+            desiredIndex < 0 ||
+            desiredIndex > maximumIndex)
+        {
+            relativeScale = 0;
+            return false;
+        }
+
+        relativeScale = checked(desiredIndex + packet.MinimumRelativeScale);
+        return true;
+    }
 }

@@ -187,6 +187,13 @@ internal struct NativeAdvancedColorInfo
     internal readonly bool IsForceDisabled => (Value & 0x8) != 0;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeAdvancedColorStateSet
+{
+    internal NativeDeviceInfoHeader Header;
+    internal uint Value;
+}
+
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 internal unsafe struct NativeDisplayDevice
 {
