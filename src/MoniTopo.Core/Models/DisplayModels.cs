@@ -59,6 +59,7 @@ public enum DisplayPathScaling
     Stretched = 2,
     AspectRatioCenteredMax = 3,
     Custom = 4,
+    Preferred = 5,
 }
 
 public enum DisplayOutputTechnology
@@ -120,3 +121,9 @@ public sealed record ConnectedDisplayState(
     bool IsActive,
     string FriendlyLabel,
     DesiredDisplayPath? ActivePath);
+
+public sealed record CapturedDisplaySnapshot(
+    IReadOnlyList<DesiredDisplayPath> ActivePaths,
+    IReadOnlyList<ConnectedDisplayState> ConnectedDisplays,
+    string PrimaryDisplayId,
+    DateTimeOffset CapturedUtc);
