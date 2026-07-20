@@ -4,6 +4,7 @@ using Microsoft.Win32;
 using MoniTopo.App.Interaction;
 using MoniTopo.App.Lifecycle;
 using MoniTopo.App.Popup;
+using MoniTopo.App.Profiles;
 using MoniTopo.App.State;
 using MoniTopo.App.Tray;
 using MoniTopo.Core.Activation;
@@ -89,9 +90,17 @@ public partial class App : System.Windows.Application, IDisposable
         _hotkeys.Pressed += OnHotkeyPressed;
 
         var resolver = new MonitorIdentityResolver();
+        var captureService = new CcdCaptureService();
+        var matcher = new ActiveProfileMatcher(resolver);
+        var profileManagement = new ProfileManagementService(_configuration, captureService, matcher);
+        _mainWindow.Initialize(
+            _configuration,
+            profileManagement,
+            _activationInteraction,
+            (profileId, hotkey) => _hotkeys.RegisterProfile(profileId, hotkey));
         _activeDisplayState = new ActiveDisplayStateCoordinator(
-            new CcdCaptureService(),
-            new ActiveProfileMatcher(resolver),
+            captureService,
+            matcher,
             () => _configuration.Current);
         _activeDisplayState.Changed += (_, state) => Dispatcher.BeginInvoke(() => _tray.SetCurrentState(state.ProfileId is null ? null : state.DisplayName));
         _displayRefresh = new DisplayStateRefreshService(async cancellationToken =>

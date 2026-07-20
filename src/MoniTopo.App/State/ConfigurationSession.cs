@@ -11,6 +11,8 @@ public sealed class ConfigurationSession(IConfigurationStore store, ApplicationC
 
     public ApplicationConfiguration Current { get; private set; } = current;
 
+    public event EventHandler<ApplicationConfiguration>? Changed;
+
     public static async Task<ConfigurationSession> LoadAsync(
         IConfigurationStore store,
         CancellationToken cancellationToken = default) =>
@@ -18,12 +20,21 @@ public sealed class ConfigurationSession(IConfigurationStore store, ApplicationC
 
     public async Task SetLastActivatedProfileAsync(Guid profileId, CancellationToken cancellationToken)
     {
+        await UpdateAsync(configuration => configuration with { LastActivatedProfileId = profileId }, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task UpdateAsync(
+        Func<ApplicationConfiguration, ApplicationConfiguration> update,
+        CancellationToken cancellationToken = default)
+    {
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var next = Current with { LastActivatedProfileId = profileId };
+            var next = update(Current);
             await store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
             Current = next;
+            Changed?.Invoke(this, next);
         }
         finally
         {
