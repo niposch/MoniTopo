@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MoniTopo.App"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="MoniTopo" Height="520" Width="860" MinHeight="420" MinWidth="640">
     <Grid>
 
     </Grid>

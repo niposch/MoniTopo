@@ -63,3 +63,11 @@ The flag combinations and device-info packets follow the current Windows CCD con
 Identity resolution produces a deterministic one-to-one map before profile comparison. Active matching then compares the exact active set and every managed property; it never trusts the last button pressed. See [display identity](display-identity.md) for the scoring and alternative-assignment ambiguity check.
 
 Windows display, device, and settings messages feed `DisplayStateRefreshService`. Bursts are debounced for 350 ms, refreshes are serialized, and a 15-second fallback consistency check covers driver changes that emit no useful message. Polling and pending work are suppressed while the session is locked or the app is shutting down. A changed state becomes `Custom`; the refresh service has no activation path.
+
+## Tray lifecycle and input routing
+
+The first process acquires a per-user named semaphore and listens on a current-user-only named pipe. A later launch writes a small `open` message and exits; the primary dispatches that request to the WPF UI thread. Closing the main window hides it, while the tray's explicit Exit command performs orderly hotkey, message-window, refresh-timer, tray-icon, and IPC cleanup.
+
+A message-only window owns global hotkeys and display/device/settings messages. `GlobalHotkeyService` assigns application-local IDs, always adds `MOD_NOREPEAT`, rejects duplicate MoniTopo bindings before calling Windows, and transactionally restores the previous registration if Windows rejects a replacement. Profile hotkeys are temporarily unregistered during activation and restored afterward; the popup hotkey remains available. See Microsoft's [RegisterHotKey](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-registerhotkey) and [UnregisterHotKey](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-unregisterhotkey) contracts.
+
+The WinForms `NotifyIcon` is limited to tray ownership, its compact context menu, tooltip, and short direct-hotkey notifications. Popup-originated activation reports through inline events and deliberately suppresses the redundant balloon. The icon is drawn deterministically from the same offset-monitor geometry retained in `Assets/tray-icon.svg`.
