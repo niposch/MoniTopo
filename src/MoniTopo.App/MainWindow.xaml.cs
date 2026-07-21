@@ -9,6 +9,7 @@ using MoniTopo.App.Profiles;
 using MoniTopo.App.Settings;
 using MoniTopo.App.State;
 using MoniTopo.Core.Activation;
+using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Models;
 using MoniTopo.Core.Updates;
 using MoniTopo.Core.Validation;
@@ -21,9 +22,11 @@ public partial class MainWindow : Window
 {
     private bool _allowClose;
     private MainWindowViewModel? _viewModel;
+    private ConfigurationSession? _configuration;
     private ProfileManagementService? _profiles;
     private ActivationInteractionController? _activation;
     private StartupSettingsCoordinator? _startupSettings;
+    private PopupHotkeySettingsCoordinator? _popupHotkeySettings;
     private UpdateCoordinator? _updates;
     private Action<string, Exception>? _logError;
     private Func<Guid, HotkeyBinding?, HotkeyRegistrationResult>? _registerHotkey;
@@ -38,24 +41,29 @@ public partial class MainWindow : Window
         ProfileManagementService profiles,
         ActivationInteractionController activation,
         StartupSettingsCoordinator startupSettings,
+        PopupHotkeySettingsCoordinator popupHotkeySettings,
         UpdateCoordinator updates,
         Action<string, Exception> logError,
         Func<Guid, HotkeyBinding?, HotkeyRegistrationResult> registerHotkey)
     {
         _profiles = profiles;
+        _configuration = configuration;
         _activation = activation;
         _startupSettings = startupSettings;
+        _popupHotkeySettings = popupHotkeySettings;
         _updates = updates;
         _logError = logError;
         _registerHotkey = registerHotkey;
         _viewModel = new MainWindowViewModel(configuration, updates);
         DataContext = _viewModel;
+        RestoreSavedBounds(configuration.Current.ApplicationSettings.LastMainWindowBounds);
     }
 
     public void AllowClose() => _allowClose = true;
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        SaveCurrentBounds();
         if (!_allowClose)
         {
             e.Cancel = true;
@@ -63,6 +71,46 @@ public partial class MainWindow : Window
         }
 
         base.OnClosing(e);
+    }
+
+    private void RestoreSavedBounds(WindowBounds? saved)
+    {
+        if (saved is not { } bounds)
+        {
+            return;
+        }
+
+        var workArea = SystemParameters.WorkArea;
+        var clamped = WindowBoundsClamp.Clamp(
+            bounds,
+            [new WindowBounds(workArea.Left, workArea.Top, workArea.Width, workArea.Height)]);
+        Left = clamped.Left;
+        Top = clamped.Top;
+        Width = Math.Max(MinWidth, clamped.Width);
+        Height = Math.Max(MinHeight, clamped.Height);
+    }
+
+    private void SaveCurrentBounds()
+    {
+        if (_configuration is null)
+        {
+            return;
+        }
+
+        var bounds = WindowState == WindowState.Normal
+            ? new WindowBounds(Left, Top, ActualWidth, ActualHeight)
+            : new WindowBounds(RestoreBounds.Left, RestoreBounds.Top, RestoreBounds.Width, RestoreBounds.Height);
+        try
+        {
+            _configuration.UpdateAsync(current => current with
+            {
+                ApplicationSettings = current.ApplicationSettings with { LastMainWindowBounds = bounds },
+            }).GetAwaiter().GetResult();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logError?.Invoke("WindowBounds", exception);
+        }
     }
 
     private async void OnSaveCurrentClick(object sender, RoutedEventArgs e)
@@ -294,6 +342,27 @@ public partial class MainWindow : Window
         checkBox.SetCurrentValue(
             System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty,
             _viewModel.UpdateChecksEnabled);
+    }
+
+    private async void OnPopupHotkeyClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        var current = _configuration!.Current.ApplicationSettings.PopupHotkey;
+        var dialog = new HotkeyCaptureDialog(current, "Popup hotkey", allowRemove: false) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.SelectedBinding is not { } binding)
+        {
+            return;
+        }
+
+        await RunActionAsync(async () =>
+        {
+            await _popupHotkeySettings!.SetAsync(binding).ConfigureAwait(true);
+            return $"Popup hotkey changed to {HotkeyDisplayText.Format(binding)}.";
+        });
     }
 
     private async void OnCheckForUpdatesClick(object sender, RoutedEventArgs e) =>

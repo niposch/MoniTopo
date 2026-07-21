@@ -137,11 +137,15 @@ public partial class App : System.Windows.Application, IDisposable
         var captureService = new CcdCaptureService();
         var matcher = new ActiveProfileMatcher(resolver);
         var profileManagement = new ProfileManagementService(_configuration, captureService, matcher);
+        var popupHotkeySettings = new PopupHotkeySettingsCoordinator(
+            _configuration,
+            binding => _hotkeys.RegisterPopup(binding));
         _mainWindow.Initialize(
             _configuration,
             profileManagement,
             _activationInteraction,
             _startupSettings,
+            popupHotkeySettings,
             _updates,
             (area, exception) => _diagnosticLog.Write(area, exception),
             (profileId, hotkey) => _hotkeys.RegisterProfile(profileId, hotkey));

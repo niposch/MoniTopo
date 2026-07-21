@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using MoniTopo.App.Interaction;
 using MoniTopo.App.State;
 using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Models;
@@ -73,6 +74,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool UpdateChecksEnabled => _configuration.Current.ApplicationSettings.UpdateChecksEnabled;
 
     public bool ShowMainWindowOnLaunch => _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch;
+
+    public string PopupHotkeyText => HotkeyDisplayText.Format(_configuration.Current.ApplicationSettings.PopupHotkey);
 
     public string CurrentVersionText => ReleaseVersion.TryParse(_updates.CurrentPackageVersion, out var version)
         ? version.DisplayVersion
@@ -153,6 +156,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RunAtLogin)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateChecksEnabled)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowMainWindowOnLaunch)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PopupHotkeyText)));
     }
 
     private void RebuildPreview()

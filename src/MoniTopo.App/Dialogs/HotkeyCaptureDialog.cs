@@ -12,10 +12,10 @@ public sealed class HotkeyCaptureDialog : Window
 {
     private readonly TextBlock _captured;
 
-    public HotkeyCaptureDialog(HotkeyBinding? current)
+    public HotkeyCaptureDialog(HotkeyBinding? current, string title = "Profile hotkey", bool allowRemove = true)
     {
         SelectedBinding = current;
-        Title = "Profile hotkey";
+        Title = title;
         Width = 390;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
@@ -31,7 +31,10 @@ public sealed class HotkeyCaptureDialog : Window
         remove.Click += (_, _) => { SelectedBinding = null; DialogResult = true; };
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 76, Margin = new Thickness(8, 0, 0, 0) };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        buttons.Children.Add(remove);
+        if (allowRemove)
+        {
+            buttons.Children.Add(remove);
+        }
         buttons.Children.Add(cancel);
         var content = new StackPanel { Margin = new Thickness(16) };
         content.Children.Add(new TextBlock { Text = "Press the desired hotkey. Ctrl, Alt, Shift, or Win is required.", TextWrapping = TextWrapping.Wrap });

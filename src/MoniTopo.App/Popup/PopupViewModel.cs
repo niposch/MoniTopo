@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using MoniTopo.App.Interaction;
 using MoniTopo.Core.Models;
 
 namespace MoniTopo.App.Popup;
@@ -66,7 +67,7 @@ public sealed class PopupViewModel : INotifyPropertyChanged
                 profile.Id,
                 profile.Name,
                 profile.Displays.Count,
-                FormatHotkey(profile.DirectHotkey),
+                HotkeyDisplayText.Format(profile.DirectHotkey),
                 profile.Id == activeProfileId));
         }
 
@@ -108,38 +109,6 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         CurrentState = succeeded
             ? Profiles.FirstOrDefault(profile => profile.Id == activeProfileId)?.Name ?? "Custom"
             : CurrentState;
-    }
-
-    private static string FormatHotkey(HotkeyBinding? binding)
-    {
-        if (binding is null)
-        {
-            return string.Empty;
-        }
-
-        var parts = new List<string>();
-        if (binding.Modifiers.HasFlag(HotkeyModifiers.Control))
-        {
-            parts.Add("Ctrl");
-        }
-
-        if (binding.Modifiers.HasFlag(HotkeyModifiers.Alt))
-        {
-            parts.Add("Alt");
-        }
-
-        if (binding.Modifiers.HasFlag(HotkeyModifiers.Shift))
-        {
-            parts.Add("Shift");
-        }
-
-        if (binding.Modifiers.HasFlag(HotkeyModifiers.Windows))
-        {
-            parts.Add("Win");
-        }
-
-        parts.Add(binding.VirtualKey is >= 0x30 and <= 0x5A ? ((char)binding.VirtualKey).ToString() : $"VK {binding.VirtualKey:X2}");
-        return string.Join('+', parts);
     }
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

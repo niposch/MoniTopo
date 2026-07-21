@@ -147,6 +147,14 @@
                                       IsChecked="{Binding ShowMainWindowOnLaunch, Mode=OneWay}"
                                       Click="OnShowWindowOnLaunchClick"
                                       Margin="0,6,0,0" />
+                            <Button HorizontalAlignment="Left"
+                                    Click="OnPopupHotkeyClick"
+                                    Margin="0,8,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Popup hotkey: " />
+                                    <TextBlock Text="{Binding PopupHotkeyText, Mode=OneWay}" />
+                                </StackPanel>
+                            </Button>
                             <CheckBox Content="Check for updates automatically once per day"
                                       IsChecked="{Binding UpdateChecksEnabled, Mode=OneWay}"
                                       Click="OnAutomaticUpdatesClick"
