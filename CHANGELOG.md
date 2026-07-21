@@ -1,6 +1,6 @@
 # Changelog
 
-## 20.07.26 release candidate
+## 21.07.26 release candidate
 
 - Initial project foundation for the Windows tray application.
 - Capture, identity matching, profile management, tray switching, global hotkeys, exact activation orchestration, and out-of-process recovery.

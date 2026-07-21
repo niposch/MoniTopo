@@ -9,7 +9,7 @@ on:
       package_version:
         description: Package version in YYYY.MDD.R form
         required: true
-        default: '2026.720.0'
+        default: '2026.721.0'
 
 permissions:
   contents: write
