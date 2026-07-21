@@ -16,6 +16,7 @@ using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Persistence;
 using MoniTopo.Core.Updates;
+using MoniTopo.Core.Versioning;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
 using MoniTopo.Windows.Startup;
@@ -108,12 +109,18 @@ public partial class App : System.Windows.Application, IDisposable
         }
 
         _mainWindow = new MainWindow();
-        _popupWindow = new PopupWindow();
-        _popupWindow.SettingsRequested += (_, _) => OpenMainWindow();
+        var versionText = ReleaseVersion.TryParse(_updates.CurrentPackageVersion, out var releaseVersion)
+            ? releaseVersion.DisplayVersion
+            : "Development build";
+        _popupWindow = new PopupWindow(versionText);
+        _popupWindow.MainWindowRequested += (_, _) => OpenMainWindow();
+        _popupWindow.SettingsRequested += (_, _) => OpenSettingsWindow();
+        _popupWindow.UpdateActionRequested += OnPopupUpdateActionRequested;
         _popupWindow.ActivateProfileRequested += OnPopupActivateRequested;
         _tray = new TrayIconService();
         _tray.TogglePopupRequested += (_, _) => TogglePopup();
-        _tray.OpenSettingsRequested += (_, _) => OpenMainWindow();
+        _tray.OpenMainWindowRequested += (_, _) => OpenMainWindow();
+        _tray.OpenSettingsRequested += (_, _) => OpenSettingsWindow();
         _tray.ExitRequested += (_, _) => ExitApplication();
 
         _messageWindow = new ApplicationMessageWindow();
@@ -169,7 +176,7 @@ public partial class App : System.Windows.Application, IDisposable
         SystemEvents.SessionSwitch += OnSessionSwitch;
         await _displayRefresh.RunConsistencyCheckAsync().ConfigureAwait(true);
 
-        _popupWindow.ViewModel.UpdateAvailable = _updates.Current.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+        _popupWindow.ViewModel.ApplyUpdateState(_updates.Current);
         _updates.Changed += OnUpdateStateChanged;
         _updateCheckTask = CheckForUpdatesAfterStartupAsync();
 
@@ -287,7 +294,7 @@ public partial class App : System.Windows.Application, IDisposable
         {
             if (_popupWindow is not null)
             {
-                _popupWindow.ViewModel.UpdateAvailable = state.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+                _popupWindow.ViewModel.ApplyUpdateState(state);
             }
         });
 
@@ -338,6 +345,31 @@ public partial class App : System.Windows.Application, IDisposable
         }
     }
 
+    private async void OnPopupUpdateActionRequested(object? sender, EventArgs eventArgs)
+    {
+        if (_updates is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_updates.Current.Status == UpdateStatus.Available)
+            {
+                await _updates.DownloadAsync(_shutdown.Token).ConfigureAwait(true);
+            }
+            else if (_updates.Current.Status == UpdateStatus.ReadyToInstall)
+            {
+                _updates.InstallAndRestart();
+            }
+        }
+        catch (Exception exception) when (exception is UpdateClientException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            _diagnosticLog?.Write("PopupUpdate", exception);
+            _popupWindow?.ViewModel.ReportProgress(exception.Message);
+        }
+    }
+
     private void OpenMainWindow()
     {
         if (_mainWindow is null)
@@ -345,7 +377,24 @@ public partial class App : System.Windows.Application, IDisposable
             return;
         }
 
-        _mainWindow.Show();
+        _mainWindow.ShowProfilesPage();
+        ShowMainWindow();
+    }
+
+    private void OpenSettingsWindow()
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        _mainWindow.ShowSettingsPage();
+        ShowMainWindow();
+    }
+
+    private void ShowMainWindow()
+    {
+        _mainWindow!.Show();
         if (_mainWindow.WindowState == WindowState.Minimized)
         {
             _mainWindow.WindowState = WindowState.Normal;
@@ -371,6 +420,6 @@ public partial class App : System.Windows.Application, IDisposable
     {
         public void TogglePopup() => owner.TogglePopup();
 
-        public void OpenSettings() => owner.OpenMainWindow();
+        public void OpenSettings() => owner.OpenSettingsWindow();
     }
 }

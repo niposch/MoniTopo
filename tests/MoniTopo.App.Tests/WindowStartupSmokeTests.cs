@@ -29,6 +29,10 @@ public sealed class WindowStartupSmokeTests
 
             window.Show();
             window.UpdateLayout();
+            window.ShowSettingsPage();
+            var navigation = LogicalDescendants<TabControl>(window).Single();
+            Assert.Equal("Settings", ((TabItem)navigation.SelectedItem).Header);
+            window.ShowProfilesPage();
             window.AllowClose();
             window.Close();
         });
@@ -47,9 +51,31 @@ public sealed class WindowStartupSmokeTests
                 "Ctrl+Alt+1",
                 IsActive: true));
             window.ViewModel.SelectedIndex = 0;
+            window.ViewModel.ApplyUpdateState(new UpdateState(
+                UpdateStatus.Available,
+                new AvailableUpdate("2026.721.0", "21.07.26", null),
+                0,
+                "Available"));
+            var mainRequested = false;
+            var settingsRequested = false;
+            var updateRequested = false;
+            window.MainWindowRequested += (_, _) => mainRequested = true;
+            window.SettingsRequested += (_, _) => settingsRequested = true;
+            window.UpdateActionRequested += (_, _) => updateRequested = true;
 
             window.Show();
             window.UpdateLayout();
+            var buttons = LogicalDescendants<Button>(window).ToArray();
+            buttons.Single(button => Equals(button.Content, "Open MoniTopo"))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            buttons.Single(button => Equals(button.Content, "Settings"))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            buttons.Single(button => button.Content?.ToString()?.Contains("Download update", StringComparison.Ordinal) == true)
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            Assert.True(mainRequested);
+            Assert.True(settingsRequested);
+            Assert.True(updateRequested);
             window.Close();
         });
     }

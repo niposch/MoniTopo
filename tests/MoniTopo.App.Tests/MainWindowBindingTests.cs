@@ -32,6 +32,18 @@ public sealed class MainWindowBindingTests
                     Assert.Equal(BindingMode.OneWay, binding.Mode);
                 }
 
+                var tabs = Descendants<TabItem>((DependencyObject)window.Content)
+                    .Select(tab => tab.Header?.ToString())
+                    .ToArray();
+                Assert.Contains("Profiles", tabs);
+                Assert.Contains("Settings", tabs);
+
+                var versionLabel = Descendants<TextBlock>((DependencyObject)window.Content)
+                    .Select(textBlock => BindingOperations.GetBindingBase(textBlock, TextBlock.TextProperty))
+                    .OfType<Binding>()
+                    .Single(binding => binding.Path.Path == "CurrentVersionText");
+                Assert.Equal(BindingMode.OneWay, versionLabel.Mode);
+
                 window.AllowClose();
                 window.Close();
             }

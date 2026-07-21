@@ -29,7 +29,7 @@ Run this checklist only on the release-candidate installer, with a keyboard path
 
 ## Lifecycle and layout
 
-- Launch a second MoniTopo instance and confirm the existing instance opens its settings window.
+- Launch a second MoniTopo instance and confirm the existing instance opens its Profiles page.
 - Close the main window and confirm MoniTopo remains in the tray; use Exit MoniTopo and confirm it terminates.
 - Test the popup with bottom, top, left, and right taskbar positions where Windows permits them.
 - Test popup placement and keyboard operation on each monitor in a mixed-DPI setup; confirm it remains inside the work area.
@@ -44,7 +44,7 @@ Run this checklist only on the release-candidate installer, with a keyboard path
 
 - Install per-user without administrator rights; record the expected unsigned SmartScreen warning.
 - Confirm Start Menu launch, first-run autostart choice, repair/reinstall behavior, and uninstall cleanup including the startup entry.
-- Check for an update against a draft test release. Confirm checks do not download automatically, Download is explicit, and Install and restart requires a second explicit action.
+- Check for an update against a draft test release. Confirm checks do not download automatically, clicking the popup update hint starts the download, and the staged update is applied by either **Restart now** or the next application launch.
 - Confirm the installed and portable builds display the expected date-formatted version.
 
 Record Windows version, GPU/driver, display models, connection types, and pass/fail notes without committing real monitor identifiers, EDID data, screenshots, or logs to the repository.

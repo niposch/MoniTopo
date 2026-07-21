@@ -6,7 +6,8 @@
         Width="980"
         MinHeight="460"
         MinWidth="680"
-        SizeChanged="OnWindowSizeChanged">
+        SizeChanged="OnWindowSizeChanged"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
     <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -14,191 +15,221 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,14">
-            <Button DockPanel.Dock="Right"
-                    Content="Save current setup"
-                    Padding="12,7"
-                    Click="OnSaveCurrentClick" />
-            <StackPanel>
-                <TextBlock Text="Display profiles" FontSize="22" FontWeight="SemiBold" />
-                <TextBlock Text="Capture the setup configured in Windows, then switch to it from the tray."
-                           Opacity="0.7" />
-            </StackPanel>
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock DockPanel.Dock="Right"
+                       Text="{Binding CurrentVersionText, Mode=OneWay}"
+                       VerticalAlignment="Center"
+                       FontSize="11"
+                       Opacity="0.48" />
+            <TextBlock Text="MoniTopo" FontSize="22" FontWeight="SemiBold" />
         </DockPanel>
 
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240" />
-                <ColumnDefinition Width="18" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <TabControl x:Name="MainNavigation" Grid.Row="1">
+            <TabItem Header="Profiles">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
 
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <ListBox ItemsSource="{Binding Profiles}"
-                         SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                         DisplayMemberPath="Name"
-                         MinHeight="160"
-                         AutomationProperties.Name="Saved display profiles" />
-                <WrapPanel Grid.Row="1" Margin="0,8,0,0">
-                    <Button Content="↑" Width="34" Margin="0,0,6,6" Click="OnMoveUpClick" AutomationProperties.Name="Move profile up" />
-                    <Button Content="↓" Width="34" Margin="0,0,6,6" Click="OnMoveDownClick" AutomationProperties.Name="Move profile down" />
-                    <Button Content="Rename" Margin="0,0,6,6" Click="OnRenameClick" />
-                    <Button Content="Delete" Margin="0,0,6,6" Click="OnDeleteClick" />
-                </WrapPanel>
-            </Grid>
-
-            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                    <DockPanel Margin="0,0,0,8">
+                    <DockPanel Grid.Row="0" Margin="0,0,0,14">
                         <Button DockPanel.Dock="Right"
-                                Content="Activate"
-                                Padding="12,6"
-                                IsEnabled="{Binding HasSelection}"
-                                Click="OnActivateClick" />
-                        <TextBlock Text="{Binding SelectedProfile.Name, TargetNullValue=No profile selected}"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   VerticalAlignment="Center" />
-                    </DockPanel>
-                    <TextBlock Text="{Binding SelectedProfileSummary}" Margin="0,0,0,10" Opacity="0.72" />
-
-                    <Border x:Name="PreviewHost"
-                            Height="280"
-                            MinHeight="180"
-                            BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
-                            BorderThickness="1"
-                            CornerRadius="6"
-                            Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
-                            SizeChanged="OnPreviewSizeChanged">
-                        <ItemsControl ItemsSource="{Binding PreviewItems}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemContainerStyle>
-                                <Style TargetType="ContentPresenter">
-                                    <Setter Property="Canvas.Left" Value="{Binding Left}" />
-                                    <Setter Property="Canvas.Top" Value="{Binding Top}" />
-                                    <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
-                                </Style>
-                            </ItemsControl.ItemContainerStyle>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Width="{Binding Width}"
-                                            Height="{Binding Height}"
-                                            BorderThickness="2"
-                                            CornerRadius="4"
-                                            Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsPrimary}" Value="True">
-                                                        <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="5">
-                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="Primary" FontSize="10" HorizontalAlignment="Center">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsPrimary}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </Border>
-
-                    <ItemsControl ItemsSource="{Binding PreviewItems}" Margin="0,10,0,0">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="0,0,0,8">
-                                    <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
-                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Opacity="0.75" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-
-                    <WrapPanel Margin="0,8,0,4">
-                        <Button Content="Update from current setup" Margin="0,0,8,8" Click="OnUpdateClick" IsEnabled="{Binding HasSelection}" />
-                        <Button Content="Assign hotkey" Margin="0,0,8,8" Click="OnHotkeyClick" IsEnabled="{Binding HasSelection}" />
-                        <Button Content="Resolve display binding" Margin="0,0,8,8" Click="OnResolveBindingClick" IsEnabled="{Binding HasSelection}" />
-                    </WrapPanel>
-
-                    <Expander Header="General settings and About" Margin="0,10,0,0">
-                        <StackPanel Margin="4,8,0,0">
-                            <CheckBox Content="Run MoniTopo when I sign in"
-                                      IsChecked="{Binding RunAtLogin, Mode=OneWay}"
-                                      Click="OnRunAtLoginClick" />
-                            <CheckBox Content="Show the main window when MoniTopo starts"
-                                      IsChecked="{Binding ShowMainWindowOnLaunch, Mode=OneWay}"
-                                      Click="OnShowWindowOnLaunchClick"
-                                      Margin="0,6,0,0" />
-                            <Button HorizontalAlignment="Left"
-                                    Click="OnPopupHotkeyClick"
-                                    Margin="0,8,0,0">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="Popup hotkey: " />
-                                    <TextBlock Text="{Binding PopupHotkeyText, Mode=OneWay}" />
-                                </StackPanel>
-                            </Button>
-                            <CheckBox Content="Check for updates automatically once per day"
-                                      IsChecked="{Binding UpdateChecksEnabled, Mode=OneWay}"
-                                      Click="OnAutomaticUpdatesClick"
-                                      Margin="0,6,0,0" />
-                            <TextBlock Margin="0,10,0,0">
-                                <Run Text="Current version: " /><Run Text="{Binding CurrentVersionText, Mode=OneWay}" />
-                            </TextBlock>
-                            <WrapPanel Margin="0,8,0,0">
-                                <Button Content="Check for updates now"
-                                        IsEnabled="{Binding CanCheckForUpdates}"
-                                        Click="OnCheckForUpdatesClick"
-                                        Margin="0,0,8,6" />
-                                <Button Content="Download update"
-                                        IsEnabled="{Binding CanDownloadUpdate}"
-                                        Click="OnDownloadUpdateClick"
-                                        Margin="0,0,8,6" />
-                                <Button Content="Install and restart"
-                                        IsEnabled="{Binding CanInstallUpdate}"
-                                        Click="OnInstallUpdateClick"
-                                        Margin="0,0,8,6" />
-                            </WrapPanel>
-                            <ProgressBar Minimum="0"
-                                         Maximum="100"
-                                         Value="{Binding UpdateProgressPercent, Mode=OneWay}"
-                                         Height="4"
-                                         Margin="0,2,0,0" />
-                            <TextBlock Text="{Binding UpdateStatusMessage}"
-                                       Margin="0,6,0,0"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.76" />
-                            <TextBlock Text="{Binding UpdateReleaseNotes}"
-                                       Margin="0,6,0,0"
-                                       TextWrapping="Wrap"
-                                       MaxHeight="90"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Margin="0,8,0,0">
-                                <Run Text="MoniTopo · MIT License · " /><Hyperlink NavigateUri="https://github.com/niposch/MoniTopo" RequestNavigate="OnRepositoryNavigate">Repository</Hyperlink>
-                            </TextBlock>
+                                Content="Save current setup"
+                                Padding="12,7"
+                                Click="OnSaveCurrentClick" />
+                        <StackPanel>
+                            <TextBlock Text="Display profiles" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Capture the setup configured in Windows, then switch to it from the tray."
+                                       Opacity="0.7" />
                         </StackPanel>
-                    </Expander>
-                </StackPanel>
-            </ScrollViewer>
-        </Grid>
+                    </DockPanel>
 
-        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,12,0,0" TextWrapping="Wrap" />
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="240" />
+                            <ColumnDefinition Width="18" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ListBox ItemsSource="{Binding Profiles}"
+                                     SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                     DisplayMemberPath="Name"
+                                     MinHeight="160"
+                                     AutomationProperties.Name="Saved display profiles" />
+                            <WrapPanel Grid.Row="1" Margin="0,8,0,0">
+                                <Button Content="↑" Width="34" Margin="0,0,6,6" Click="OnMoveUpClick" AutomationProperties.Name="Move profile up" />
+                                <Button Content="↓" Width="34" Margin="0,0,6,6" Click="OnMoveDownClick" AutomationProperties.Name="Move profile down" />
+                                <Button Content="Rename" Margin="0,0,6,6" Click="OnRenameClick" />
+                                <Button Content="Delete" Margin="0,0,6,6" Click="OnDeleteClick" />
+                            </WrapPanel>
+                        </Grid>
+
+                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,8">
+                                    <Button DockPanel.Dock="Right"
+                                            Content="Activate"
+                                            Padding="12,6"
+                                            IsEnabled="{Binding HasSelection}"
+                                            Click="OnActivateClick" />
+                                    <TextBlock Text="{Binding SelectedProfile.Name, TargetNullValue=No profile selected}"
+                                               FontSize="18"
+                                               FontWeight="SemiBold"
+                                               VerticalAlignment="Center" />
+                                </DockPanel>
+                                <TextBlock Text="{Binding SelectedProfileSummary}" Margin="0,0,0,10" Opacity="0.72" />
+
+                                <Border x:Name="PreviewHost"
+                                        Height="280"
+                                        MinHeight="180"
+                                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Background="{DynamicResource LayerFillColorDefaultBrush}"
+                                        SizeChanged="OnPreviewSizeChanged">
+                                    <ItemsControl ItemsSource="{Binding PreviewItems}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="ContentPresenter">
+                                                <Setter Property="Canvas.Left" Value="{Binding Left}" />
+                                                <Setter Property="Canvas.Top" Value="{Binding Top}" />
+                                                <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Width="{Binding Width}"
+                                                        Height="{Binding Height}"
+                                                        BorderThickness="2"
+                                                        CornerRadius="4"
+                                                        Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsPrimary}" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.AccentColorBrushKey}}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="5">
+                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="Primary" FontSize="10" HorizontalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsPrimary}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+
+                                <ItemsControl ItemsSource="{Binding PreviewItems}" Margin="0,10,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Opacity="0.75" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <WrapPanel Margin="0,8,0,4">
+                                    <Button Content="Update from current setup" Margin="0,0,8,8" Click="OnUpdateClick" IsEnabled="{Binding HasSelection}" />
+                                    <Button Content="Assign hotkey" Margin="0,0,8,8" Click="OnHotkeyClick" IsEnabled="{Binding HasSelection}" />
+                                    <Button Content="Resolve display binding" Margin="0,0,8,8" Click="OnResolveBindingClick" IsEnabled="{Binding HasSelection}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Settings">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,16,16,12" MaxWidth="680" HorizontalAlignment="Left">
+                        <TextBlock Text="General" FontSize="18" FontWeight="SemiBold" />
+                        <CheckBox Content="Run MoniTopo when I sign in"
+                                  IsChecked="{Binding RunAtLogin, Mode=OneWay}"
+                                  Click="OnRunAtLoginClick"
+                                  Margin="0,12,0,0" />
+                        <CheckBox Content="Show the main window when MoniTopo starts"
+                                  IsChecked="{Binding ShowMainWindowOnLaunch, Mode=OneWay}"
+                                  Click="OnShowWindowOnLaunchClick"
+                                  Margin="0,8,0,0" />
+                        <Button HorizontalAlignment="Left"
+                                Click="OnPopupHotkeyClick"
+                                Margin="0,10,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Popup hotkey: " />
+                                <TextBlock Text="{Binding PopupHotkeyText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
+
+                        <Separator Margin="0,18,0,16" />
+                        <TextBlock Text="Updates" FontSize="18" FontWeight="SemiBold" />
+                        <CheckBox Content="Check for updates automatically once per day"
+                                  IsChecked="{Binding UpdateChecksEnabled, Mode=OneWay}"
+                                  Click="OnAutomaticUpdatesClick"
+                                  Margin="0,12,0,0" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button Content="Check for updates now"
+                                    IsEnabled="{Binding CanCheckForUpdates}"
+                                    Click="OnCheckForUpdatesClick"
+                                    Margin="0,0,8,6" />
+                            <Button Content="Download update"
+                                    IsEnabled="{Binding CanDownloadUpdate}"
+                                    Click="OnDownloadUpdateClick"
+                                    Margin="0,0,8,6" />
+                            <Button Content="Install and restart"
+                                    IsEnabled="{Binding CanInstallUpdate}"
+                                    Click="OnInstallUpdateClick"
+                                    Margin="0,0,8,6" />
+                        </WrapPanel>
+                        <ProgressBar Minimum="0"
+                                     Maximum="100"
+                                     Value="{Binding UpdateProgressPercent, Mode=OneWay}"
+                                     Height="4"
+                                     Margin="0,3,0,0" />
+                        <TextBlock Text="{Binding UpdateStatusMessage}"
+                                   Margin="0,7,0,0"
+                                   TextWrapping="Wrap"
+                                   Opacity="0.76" />
+                        <TextBlock Text="{Binding UpdateReleaseNotes}"
+                                   Margin="0,6,0,0"
+                                   TextWrapping="Wrap"
+                                   MaxHeight="90"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <Separator Margin="0,18,0,16" />
+                        <TextBlock Text="About" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,8,0,0" Opacity="0.72">
+                            <Run Text="Version " /><Run Text="{Binding CurrentVersionText, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock Margin="0,6,0,0">
+                            <Run Text="MoniTopo · MIT License · " /><Hyperlink NavigateUri="https://github.com/niposch/MoniTopo" RequestNavigate="OnRepositoryNavigate">Repository</Hyperlink>
+                        </TextBlock>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Margin="0,10,0,0" TextWrapping="Wrap" />
     </Grid>
 </Window>

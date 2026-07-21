@@ -9,10 +9,10 @@ namespace MoniTopo.App.Popup;
 
 public partial class PopupWindow : Window
 {
-    public PopupWindow()
+    public PopupWindow(string versionText = "Development build")
     {
         InitializeComponent();
-        ViewModel = new PopupViewModel();
+        ViewModel = new PopupViewModel(versionText);
         DataContext = ViewModel;
         ContentRendered += OnContentRendered;
     }
@@ -21,7 +21,11 @@ public partial class PopupWindow : Window
 
     public event EventHandler<Guid>? ActivateProfileRequested;
 
+    public event EventHandler? MainWindowRequested;
+
     public event EventHandler? SettingsRequested;
+
+    public event EventHandler? UpdateActionRequested;
 
     public void ShowProfiles(IReadOnlyList<DisplayProfile> profiles, Guid? activeProfileId)
     {
@@ -79,7 +83,14 @@ public partial class PopupWindow : Window
         SettingsRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void OnUpdateClick(object sender, RoutedEventArgs e) => OnSettingsClick(sender, e);
+    private void OnMainWindowClick(object sender, RoutedEventArgs e)
+    {
+        Hide();
+        MainWindowRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnUpdateClick(object sender, RoutedEventArgs e) =>
+        UpdateActionRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnDeactivated(object? sender, EventArgs e)
     {

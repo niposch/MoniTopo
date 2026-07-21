@@ -20,7 +20,8 @@ public sealed class TrayIconService : IUserNotificationService, IDisposable
     {
         _icon = TrayIconDrawing.Create();
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open settings", null, (_, _) => OpenSettingsRequested?.Invoke(this, EventArgs.Empty));
+        menu.Items.Add("Open MoniTopo", null, (_, _) => OpenMainWindowRequested?.Invoke(this, EventArgs.Empty));
+        menu.Items.Add("Settings", null, (_, _) => OpenSettingsRequested?.Invoke(this, EventArgs.Empty));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit MoniTopo", null, (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty));
         _notifyIcon = new NotifyIcon
@@ -34,6 +35,8 @@ public sealed class TrayIconService : IUserNotificationService, IDisposable
     }
 
     public event EventHandler? TogglePopupRequested;
+
+    public event EventHandler? OpenMainWindowRequested;
 
     public event EventHandler? OpenSettingsRequested;
 

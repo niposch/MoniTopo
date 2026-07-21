@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using MoniTopo.App.Interaction;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Updates;
 
 namespace MoniTopo.App.Popup;
 
@@ -19,7 +20,12 @@ public sealed class PopupViewModel : INotifyPropertyChanged
     private string _currentState = "Custom";
     private string? _statusMessage;
     private bool _isBusy;
-    private bool _updateAvailable;
+    private UpdateState _updateState = UpdateState.Idle;
+
+    public PopupViewModel(string versionText = "Development build")
+    {
+        VersionText = versionText;
+    }
 
     public ObservableCollection<PopupProfileItem> Profiles { get; } = [];
 
@@ -47,11 +53,20 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         private set => SetField(ref _isBusy, value);
     }
 
-    public bool UpdateAvailable
+    public string VersionText { get; }
+
+    public bool ShowUpdateAction => _updateState.Status is
+        UpdateStatus.Available or UpdateStatus.Downloading or UpdateStatus.ReadyToInstall;
+
+    public bool CanRunUpdateAction => _updateState.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+
+    public string UpdateActionText => _updateState.Status switch
     {
-        get => _updateAvailable;
-        set => SetField(ref _updateAvailable, value);
-    }
+        UpdateStatus.Available => $"Version {_updateState.Update?.DisplayVersion} available — Download update",
+        UpdateStatus.Downloading => $"Downloading version {_updateState.Update?.DisplayVersion}… {_updateState.ProgressPercent}%",
+        UpdateStatus.ReadyToInstall => $"Version {_updateState.Update?.DisplayVersion} ready — Restart now",
+        _ => string.Empty,
+    };
 
     public PopupProfileItem? SelectedProfile =>
         SelectedIndex >= 0 && SelectedIndex < Profiles.Count ? Profiles[SelectedIndex] : null;
@@ -96,6 +111,19 @@ public sealed class PopupViewModel : INotifyPropertyChanged
     }
 
     public void ReportProgress(string message) => StatusMessage = message;
+
+    public void ApplyUpdateState(UpdateState state)
+    {
+        _updateState = state;
+        if (state.Status is UpdateStatus.Error or UpdateStatus.NotInstalled)
+        {
+            StatusMessage = state.Message;
+        }
+
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUpdateAction)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRunUpdateAction)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateActionText)));
+    }
 
     public void CompleteActivation(bool succeeded, string message, Guid? activeProfileId)
     {

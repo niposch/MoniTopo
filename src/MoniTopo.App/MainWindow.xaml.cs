@@ -61,6 +61,10 @@ public partial class MainWindow : Window
 
     public void AllowClose() => _allowClose = true;
 
+    public void ShowProfilesPage() => MainNavigation.SelectedIndex = 0;
+
+    public void ShowSettingsPage() => MainNavigation.SelectedIndex = 1;
+
     protected override void OnClosing(CancelEventArgs e)
     {
         SaveCurrentBounds();

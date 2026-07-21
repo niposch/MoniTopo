@@ -1,5 +1,6 @@
 using MoniTopo.App.Popup;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Updates;
 
 namespace MoniTopo.App.Tests;
 
@@ -63,6 +64,32 @@ public sealed class PopupViewModelTests
         Assert.Equal("Movie activated", viewModel.StatusMessage);
         Assert.Equal("Movie", viewModel.CurrentState);
         Assert.True(viewModel.Profiles.Single(profile => profile.Id == movie.Id).IsActive);
+    }
+
+    [Fact]
+    public void UpdateActionMovesFromDownloadToProgressToRestart()
+    {
+        var update = new AvailableUpdate("2026.721.0", "21.07.26", null);
+        var viewModel = new PopupViewModel("20.07.26");
+
+        viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Available, update, 0, "Available"));
+
+        Assert.True(viewModel.ShowUpdateAction);
+        Assert.True(viewModel.CanRunUpdateAction);
+        Assert.Contains("Download update", viewModel.UpdateActionText, StringComparison.Ordinal);
+        Assert.Equal("20.07.26", viewModel.VersionText);
+
+        viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Downloading, update, 46, "Downloading"));
+        Assert.False(viewModel.CanRunUpdateAction);
+        Assert.Contains("46%", viewModel.UpdateActionText, StringComparison.Ordinal);
+
+        viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.ReadyToInstall, update, 100, "Ready"));
+        Assert.True(viewModel.CanRunUpdateAction);
+        Assert.Contains("Restart now", viewModel.UpdateActionText, StringComparison.Ordinal);
+
+        viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Error, update, 0, "Download failed"));
+        Assert.False(viewModel.ShowUpdateAction);
+        Assert.Equal("Download failed", viewModel.StatusMessage);
     }
 
     private static DisplayProfile Profile(string name, int index)
