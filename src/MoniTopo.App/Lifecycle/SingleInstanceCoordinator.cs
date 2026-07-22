@@ -7,6 +7,7 @@ namespace MoniTopo.App.Lifecycle;
 
 public sealed class SingleInstanceCoordinator : IAsyncDisposable
 {
+    private const string DefaultApplicationId = "MoniTopo";
     private readonly Semaphore _instanceSemaphore;
     private readonly string _pipeName;
     private readonly CancellationTokenSource _lifetime = new();
@@ -23,13 +24,16 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
 
     public event EventHandler? OpenRequested;
 
-    public static SingleInstanceCoordinator CreateForCurrentUser()
+    public static SingleInstanceCoordinator CreateForCurrentUser() => CreateForCurrentUser(DefaultApplicationId);
+
+    internal static SingleInstanceCoordinator CreateForCurrentUser(string applicationId)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
         var user = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("The current Windows user has no SID.");
         var suffix = user.Replace("-", "_", StringComparison.Ordinal);
-        var instanceSemaphore = new Semaphore(1, 1, $"Local\\MoniTopo.{suffix}");
+        var instanceSemaphore = new Semaphore(1, 1, $"Local\\{applicationId}.{suffix}");
         var isPrimary = instanceSemaphore.WaitOne(TimeSpan.Zero);
-        return new SingleInstanceCoordinator(instanceSemaphore, $"MoniTopo.{suffix}", isPrimary);
+        return new SingleInstanceCoordinator(instanceSemaphore, $"{applicationId}.{suffix}", isPrimary);
     }
 
     public void StartListening()
@@ -55,14 +59,16 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
             await using var pipe = new NamedPipeClientStream(
                 ".",
                 _pipeName,
-                PipeDirection.Out,
+                PipeDirection.InOut,
                 PipeOptions.Asynchronous);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(2));
             await pipe.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            await pipe.WriteAsync("open"u8.ToArray(), timeout.Token).ConfigureAwait(false);
+            await pipe.WriteAsync("open\n"u8.ToArray(), timeout.Token).ConfigureAwait(false);
             await pipe.FlushAsync(timeout.Token).ConfigureAwait(false);
-            return true;
+            var acknowledgement = new byte[1];
+            var count = await pipe.ReadAsync(acknowledgement, timeout.Token).ConfigureAwait(false);
+            return count == 1 && acknowledgement[0] == 1;
         }
         catch (Exception exception) when (exception is IOException or OperationCanceledException)
         {
@@ -97,19 +103,57 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await using var pipe = new NamedPipeServerStream(
-                _pipeName,
-                PipeDirection.In,
-                maxNumberOfServerInstances: 1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            var buffer = new byte[16];
-            var count = await pipe.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (string.Equals(Encoding.UTF8.GetString(buffer, 0, count), "open", StringComparison.Ordinal))
+            try
             {
-                OpenRequested?.Invoke(this, EventArgs.Empty);
+                await using var pipe = new NamedPipeServerStream(
+                    _pipeName,
+                    PipeDirection.InOut,
+                    maxNumberOfServerInstances: 1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+                var command = await SingleInstancePipeProtocol.ReadCommandAsync(pipe, cancellationToken).ConfigureAwait(false);
+                var accepted = string.Equals(command, "open", StringComparison.Ordinal);
+                if (accepted)
+                {
+                    OpenRequested?.Invoke(this, EventArgs.Empty);
+                }
+
+                await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, cancellationToken).ConfigureAwait(false);
+                await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A client can disappear between connection and acknowledgement. Keep listening.
             }
         }
+    }
+}
+
+internal static class SingleInstancePipeProtocol
+{
+    private const int MaximumCommandBytes = 16;
+
+    internal static async Task<string?> ReadCommandAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[MaximumCommandBytes];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var count = await stream.ReadAsync(buffer.AsMemory(length, 1), cancellationToken).ConfigureAwait(false);
+            if (count == 0)
+            {
+                break;
+            }
+
+            if (buffer[length] == (byte)'\n')
+            {
+                return Encoding.UTF8.GetString(buffer, 0, length).TrimEnd('\r');
+            }
+
+            length += count;
+        }
+
+        return null;
     }
 }
