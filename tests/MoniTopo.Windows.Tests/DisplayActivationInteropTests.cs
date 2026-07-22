@@ -51,12 +51,26 @@ public sealed class DisplayActivationInteropTests
         var adapter = new NativeAdapterId(7, 2);
 
         facade.SetDpiScale(adapter, 3, -1);
-        facade.SetAdvancedColor(adapter, 9, enabled: true);
+        facade.SetHdrState(adapter, 9, enabled: true);
 
         Assert.Equal(UndocumentedDpiScaleContract.SetRequestType, api.DpiPacket.Type);
         Assert.Equal(-1, api.DpiPacket.RelativeScale);
+        Assert.Equal(16, api.HdrPacket.Type);
+        Assert.Equal(1u, api.HdrPacket.Value);
+        Assert.Equal(default, api.ColorPacket);
+    }
+
+    [Fact]
+    public void HdrSetterFallsBackToLegacyAdvancedColorOnOlderWindows()
+    {
+        var api = new FakeMutationApi { HdrResult = DisplayConfigNativeFacade.ErrorInvalidParameter };
+        var facade = new DisplayConfigMutationFacade(Authorization(), api);
+
+        facade.SetHdrState(new NativeAdapterId(7, 2), 9, enabled: false);
+
+        Assert.Equal(16, api.HdrPacket.Type);
         Assert.Equal(10, api.ColorPacket.Type);
-        Assert.Equal(1u, api.ColorPacket.Value);
+        Assert.Equal(0u, api.ColorPacket.Value);
     }
 
     [Fact]
@@ -96,6 +110,32 @@ public sealed class DisplayActivationInteropTests
             AvailableConfiguration(adapter)));
 
         Assert.Equal("activation.profile.target-signal-missing", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task PreflightDefersScaleQueryForDisplayThatIsCurrentlyInactive()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var display = Display("display-2", "source-b", true, new DisplayPoint(0, 0), 1);
+        var native = new FakeDisplayNative
+        {
+            Snapshot = AvailableConfiguration(adapter),
+            DpiErrorCode = DisplayConfigNativeFacade.ErrorNotSupported,
+        };
+        var backend = new GuardedDisplayActivationBackend(
+            new UnusedCaptureService(),
+            native,
+            new DisplayConfigMutationFacade(Authorization(), new FakeMutationApi()),
+            new SupportedSessionGuard(),
+            Path.Combine(Path.GetTempPath(), "MoniTopo.Windows.Tests", Guid.NewGuid().ToString("N")),
+            TimeProvider.System);
+
+        await backend.PreflightAsync(
+            Profile([display]),
+            [new ResolvedIdentityBinding(display.DisplayId, TargetKey(adapter, 1), 100)],
+            CancellationToken.None);
+
+        Assert.Equal(0, native.DpiQueryCount);
     }
 
     [Fact]
@@ -254,6 +294,10 @@ public sealed class DisplayActivationInteropTests
 
         internal (int Type, uint Value) ColorPacket { get; private set; }
 
+        internal (int Type, uint Value) HdrPacket { get; private set; }
+
+        internal int HdrResult { get; init; }
+
         public int SetDisplayConfig(NativePathInfo[] paths, NativeModeInfo[] modes, uint flags)
         {
             CoreFlags.Add(flags);
@@ -271,6 +315,12 @@ public sealed class DisplayActivationInteropTests
             ColorPacket = (packet.Header.Type, packet.Value);
             return 0;
         }
+
+        public int SetHdrState(ref NativeHdrStateSet packet)
+        {
+            HdrPacket = (packet.Header.Type, packet.Value);
+            return HdrResult;
+        }
     }
 
     private sealed class ReadyRecoveryLauncher : IRecoveryProcessLauncher
@@ -287,5 +337,16 @@ public sealed class DisplayActivationInteropTests
             readyEvent.Set();
             return Process.GetCurrentProcess();
         }
+    }
+
+    private sealed class UnusedCaptureService : IDisplayCaptureService
+    {
+        public Task<CapturedDisplaySnapshot> CaptureAsync(CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException();
+    }
+
+    private sealed class SupportedSessionGuard : IInteractiveDisplaySessionGuard
+    {
+        public bool IsSupported => true;
     }
 }

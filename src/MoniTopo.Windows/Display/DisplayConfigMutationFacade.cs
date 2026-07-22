@@ -22,6 +22,8 @@ internal interface IDisplayConfigMutationApi
     int SetDpiScale(ref NativeDpiScaleSet packet);
 
     int SetAdvancedColorState(ref NativeAdvancedColorStateSet packet);
+
+    int SetHdrState(ref NativeHdrStateSet packet);
 }
 
 internal sealed class User32DisplayConfigMutationApi : IDisplayConfigMutationApi
@@ -44,6 +46,8 @@ internal sealed class User32DisplayConfigMutationApi : IDisplayConfigMutationApi
 
     public int SetAdvancedColorState(ref NativeAdvancedColorStateSet packet) =>
         NativeMethods.SetAdvancedColorState(ref packet);
+
+    public int SetHdrState(ref NativeHdrStateSet packet) => NativeMethods.SetHdrState(ref packet);
 }
 
 internal sealed class DisplayConfigMutationFacade
@@ -112,8 +116,27 @@ internal sealed class DisplayConfigMutationFacade
             "Windows could not apply the saved display scaling.");
     }
 
-    internal void SetAdvancedColor(NativeAdapterId adapterId, uint targetId, bool enabled)
+    internal void SetHdrState(NativeAdapterId adapterId, uint targetId, bool enabled)
     {
+        var hdrPacket = new NativeHdrStateSet
+        {
+            Header = CreateHeader(16, Marshal.SizeOf<NativeHdrStateSet>(), adapterId, targetId),
+            Value = enabled ? 1u : 0u,
+        };
+        var hdrResult = _api.SetHdrState(ref hdrPacket);
+        if (hdrResult == DisplayConfigNativeFacade.ErrorSuccess)
+        {
+            return;
+        }
+
+        if (!DisplayConfigNativeFacade.IsUnsupportedRequest(hdrResult))
+        {
+            ThrowIfFailed(
+                hdrResult,
+                "activation.hdr.failed",
+                "Windows could not apply the saved HDR state.");
+        }
+
         var packet = new NativeAdvancedColorStateSet
         {
             Header = CreateHeader(10, Marshal.SizeOf<NativeAdvancedColorStateSet>(), adapterId, targetId),

@@ -111,7 +111,7 @@ public sealed class CcdCaptureService : IDisplayCaptureService
                 throw new DisplayCaptureException(0, scale.ErrorMessage ?? "Windows display scaling could not be captured.");
             }
 
-            var color = _native.GetAdvancedColorInfo(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            var hdr = _native.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
             var targetKey = TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id);
             var target = targetData[targetKey];
             var sourceMode = raw.Modes[sourceModeIndex].Mode.SourceMode;
@@ -130,7 +130,7 @@ public sealed class CcdCaptureService : IDisplayCaptureService
                 Orientation: MapOrientation(path.TargetInfo.Rotation),
                 PathScaling: MapScaling(path.TargetInfo.Scaling),
                 WindowsUiScalePercent: scale.CurrentPercent.Value,
-                HdrEnabled: color.IsSupported && color.IsEnabled && !color.IsForceDisabled,
+                HdrEnabled: hdr.IsSupported && hdr.IsEnabled,
                 IsPrimary: isPrimary,
                 FriendlyLabel: string.IsNullOrWhiteSpace(target.Name.FriendlyName) ? $"Display {index + 1}" : target.Name.FriendlyName)
             {

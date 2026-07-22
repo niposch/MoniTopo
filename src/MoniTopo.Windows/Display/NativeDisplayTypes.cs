@@ -188,7 +188,35 @@ internal struct NativeAdvancedColorInfo
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct NativeAdvancedColorInfo2
+{
+    internal NativeDeviceInfoHeader Header;
+    internal uint Value;
+    internal uint ColorEncoding;
+    internal uint BitsPerColorChannel;
+    internal uint ActiveColorMode;
+
+    internal readonly bool IsHdrSupported => (Value & 0x10) != 0;
+
+    internal readonly bool IsHdrUserEnabled => (Value & 0x20) != 0;
+
+    internal readonly bool IsLimitedByPolicy => (Value & 0x8) != 0;
+}
+
+internal readonly record struct NativeHdrState(
+    bool IsSupported,
+    bool IsEnabled,
+    bool IsLimitedByPolicy);
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeAdvancedColorStateSet
+{
+    internal NativeDeviceInfoHeader Header;
+    internal uint Value;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeHdrStateSet
 {
     internal NativeDeviceInfoHeader Header;
     internal uint Value;

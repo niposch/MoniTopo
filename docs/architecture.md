@@ -32,7 +32,7 @@ Core tests operate on immutable synthetic records. `DisplayMutationAuthorization
 
 Target identity starts with the CCD monitor path, friendly name, EDID manufacturer/product fields, connector type, and connector instance. A read-only SetupAPI pass matches the monitor interface path, obtains the device instance ID, and reads EDID from the device registry key. The parser retains normalized identity fields and a short mode signature, not the raw EDID. Native layout tests are based on the installed Windows SDK 10.0.26100 header definitions.
 
-Advanced Color capture uses documented request type 9 and records the supported, enabled, and policy-disabled flags. The app treats an unsupported display as HDR off; a failed query is a capture error rather than a partially saved profile.
+On Windows 11, HDR capture uses documented request type 15 and reads the HDR-supported and HDR-user-enabled bits rather than treating generic Advanced Color activity as HDR. HDR mutation uses request type 16. Older Windows versions that reject those request types fall back to the legacy Advanced Color query and setter. The app treats an unsupported display as HDR off; a failed query is a capture error rather than a partially saved profile.
 
 ### Per-monitor scale compatibility
 
@@ -42,7 +42,7 @@ Windows does not document request types `-3` and `-4`, despite Windows Settings 
 - [MartinGC94/DisplayConfig DPI structures](https://github.com/MartinGC94/DisplayConfig/tree/main/src/DisplayConfig/Native/Structs)
 - [lihas/windows-DPI-scaling-sample](https://github.com/lihas/windows-DPI-scaling-sample/blob/master/DPIHelper/DpiHelper.h)
 
-The corresponding setter maps a saved percentage back to the runtime-probed relative index. An unavailable percentage fails preflight; scaling is never silently skipped.
+The corresponding setter maps a saved percentage back to the runtime-probed relative index. An unavailable percentage fails preflight; scaling is never silently skipped. A source-specific preflight query is possible only for a currently active target. For a target that the requested topology will enable, preflight validates the saved percentage against the known Windows scale steps and defers the exact relative-index lookup until after the temporary topology is active. That lookup remains inside the recovery-protected activation transaction and any failure rolls the topology back.
 
 ## Activation and recovery
 
@@ -50,7 +50,7 @@ The corresponding setter maps a saved percentage back to the runtime-probed rela
 
 `DisplayConfigurationPlanBuilder` reconstructs one source mode per saved source group and one target mode per display. It assigns currently exposed CCD sources one-to-one, preserves clone groups, and refuses legacy/incomplete profiles without a captured target signal. `SetDisplayConfig` is called with `SDC_USE_SUPPLIED_DISPLAY_CONFIG` and either `SDC_VALIDATE` or `SDC_APPLY`. Verified persistence adds `SDC_SAVE_TO_DATABASE`. Virtual-mode and virtual-refresh awareness are always declared; `SDC_ALLOW_CHANGES` is deliberately absent so Windows cannot substitute a nearby mode.
 
-The transient rollback file contains versioned raw CCD paths/modes plus the active targets' scale and Advanced Color states. `MoniTopo.Recovery` takes a per-transaction lock, opens the named success event, signals a readiness handshake, and watches both the main process and a bounded deadline. A missing success signal triggers the same guarded rollback implementation in the companion process. Corrupt payloads do not invoke a display writer. Successful or handled transactions remove the payload and rollback data; a recovery outcome remains available as `result.json` when the companion had to act.
+The transient rollback file contains versioned raw CCD paths/modes plus the active targets' scale and HDR states. `MoniTopo.Recovery` takes a per-transaction lock, opens the named success event, signals a readiness handshake, and watches both the main process and a bounded deadline. A missing success signal triggers the same guarded rollback implementation in the companion process. Corrupt payloads do not invoke a display writer. Successful or handled transactions remove the payload and rollback data; a recovery outcome remains available as `result.json` when the companion had to act.
 
 The flag combinations and device-info packets follow the current Windows CCD contracts:
 

@@ -37,6 +37,9 @@ internal static partial class NativeMethods
     internal static partial int GetAdvancedColorInfo(ref NativeAdvancedColorInfo packet);
 
     [LibraryImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
+    internal static partial int GetAdvancedColorInfo2(ref NativeAdvancedColorInfo2 packet);
+
+    [LibraryImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
     internal static partial int GetDpiScale(ref NativeDpiScaleGet packet);
 
     [LibraryImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
@@ -44,6 +47,9 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
     internal static partial int SetAdvancedColorState(ref NativeAdvancedColorStateSet packet);
+
+    [LibraryImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
+    internal static partial int SetHdrState(ref NativeHdrStateSet packet);
 
     [LibraryImport("user32.dll")]
     internal static partial int GetSystemMetrics(int index);

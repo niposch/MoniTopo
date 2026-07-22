@@ -14,7 +14,7 @@ internal interface IDisplayConfigNativeFacade
 
     NativeTargetPreferredMode GetTargetPreferredMode(NativeAdapterId adapterId, uint targetId);
 
-    NativeAdvancedColorInfo GetAdvancedColorInfo(NativeAdapterId adapterId, uint targetId);
+    NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId);
 
     (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId);
 
@@ -26,6 +26,22 @@ internal interface IDisplayConfigQueryApi
     int GetBufferSizes(uint flags, out uint pathCount, out uint modeCount);
 
     int Query(uint flags, ref uint pathCount, NativePathInfo[] paths, ref uint modeCount, NativeModeInfo[] modes);
+}
+
+internal interface IDisplayConfigDeviceInfoApi
+{
+    int GetAdvancedColorInfo(ref NativeAdvancedColorInfo packet);
+
+    int GetAdvancedColorInfo2(ref NativeAdvancedColorInfo2 packet);
+}
+
+internal sealed class User32DisplayConfigDeviceInfoApi : IDisplayConfigDeviceInfoApi
+{
+    public int GetAdvancedColorInfo(ref NativeAdvancedColorInfo packet) =>
+        NativeMethods.GetAdvancedColorInfo(ref packet);
+
+    public int GetAdvancedColorInfo2(ref NativeAdvancedColorInfo2 packet) =>
+        NativeMethods.GetAdvancedColorInfo2(ref packet);
 }
 
 internal sealed class User32DisplayConfigQueryApi : IDisplayConfigQueryApi
@@ -53,18 +69,30 @@ internal sealed class DisplayConfigNativeFacade : IDisplayConfigNativeFacade
 {
     internal const int ErrorSuccess = 0;
     internal const int ErrorInsufficientBuffer = 122;
+    internal const int ErrorNotSupported = 50;
+    internal const int ErrorInvalidParameter = 87;
+    internal const int ErrorCallNotImplemented = 120;
     private const int MaximumQueryAttempts = 5;
     private const uint DisplayDevicePrimary = 0x4;
     private readonly IDisplayConfigQueryApi _queryApi;
+    private readonly IDisplayConfigDeviceInfoApi _deviceInfoApi;
 
     internal DisplayConfigNativeFacade()
-        : this(new User32DisplayConfigQueryApi())
+        : this(new User32DisplayConfigQueryApi(), new User32DisplayConfigDeviceInfoApi())
     {
     }
 
     internal DisplayConfigNativeFacade(IDisplayConfigQueryApi queryApi)
+        : this(queryApi, new User32DisplayConfigDeviceInfoApi())
+    {
+    }
+
+    internal DisplayConfigNativeFacade(
+        IDisplayConfigQueryApi queryApi,
+        IDisplayConfigDeviceInfoApi deviceInfoApi)
     {
         _queryApi = queryApi;
+        _deviceInfoApi = deviceInfoApi;
     }
 
     public NativeDisplaySnapshot Query(uint flags)
@@ -124,14 +152,35 @@ internal sealed class DisplayConfigNativeFacade : IDisplayConfigNativeFacade
         return packet;
     }
 
-    public NativeAdvancedColorInfo GetAdvancedColorInfo(NativeAdapterId adapterId, uint targetId)
+    public NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId)
     {
+        var currentPacket = new NativeAdvancedColorInfo2
+        {
+            Header = CreateHeader(type: 15, Marshal.SizeOf<NativeAdvancedColorInfo2>(), adapterId, targetId),
+        };
+        var currentResult = _deviceInfoApi.GetAdvancedColorInfo2(ref currentPacket);
+        if (currentResult == ErrorSuccess)
+        {
+            return new NativeHdrState(
+                currentPacket.IsHdrSupported,
+                currentPacket.IsHdrUserEnabled,
+                currentPacket.IsLimitedByPolicy);
+        }
+
+        if (!IsUnsupportedRequest(currentResult))
+        {
+            ThrowIfFailed(currentResult, "Windows could not read the HDR state.");
+        }
+
         var packet = new NativeAdvancedColorInfo
         {
             Header = CreateHeader(type: 9, Marshal.SizeOf<NativeAdvancedColorInfo>(), adapterId, targetId),
         };
-        ThrowIfFailed(NativeMethods.GetAdvancedColorInfo(ref packet), "Windows could not read the HDR state.");
-        return packet;
+        ThrowIfFailed(_deviceInfoApi.GetAdvancedColorInfo(ref packet), "Windows could not read the HDR state.");
+        return new NativeHdrState(
+            packet.IsSupported,
+            packet.IsEnabled,
+            packet.IsForceDisabled);
     }
 
     public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId)
@@ -180,6 +229,9 @@ internal sealed class DisplayConfigNativeFacade : IDisplayConfigNativeFacade
             throw new DisplayCaptureException(errorCode, message);
         }
     }
+
+    internal static bool IsUnsupportedRequest(int errorCode) =>
+        errorCode is ErrorNotSupported or ErrorInvalidParameter or ErrorCallNotImplemented;
 }
 
 public sealed class DisplayCaptureException(int nativeErrorCode, string message) : Exception(message)

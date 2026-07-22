@@ -17,7 +17,9 @@ public sealed class NativeLayoutTests
         Assert.Equal(420, Marshal.SizeOf<NativeTargetDeviceName>());
         Assert.Equal(80, Marshal.SizeOf<NativeTargetPreferredMode>());
         Assert.Equal(32, Marshal.SizeOf<NativeAdvancedColorInfo>());
+        Assert.Equal(36, Marshal.SizeOf<NativeAdvancedColorInfo2>());
         Assert.Equal(24, Marshal.SizeOf<NativeAdvancedColorStateSet>());
+        Assert.Equal(24, Marshal.SizeOf<NativeHdrStateSet>());
         Assert.Equal(32, Marshal.SizeOf<NativeDpiScaleGet>());
         Assert.Equal(24, Marshal.SizeOf<NativeDpiScaleSet>());
     }

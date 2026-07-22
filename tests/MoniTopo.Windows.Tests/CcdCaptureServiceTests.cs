@@ -98,6 +98,8 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
 
     internal NativeDpiScaleGet DpiPacket { get; init; }
 
+    internal int DpiQueryCount { get; private set; }
+
     public NativeDisplaySnapshot Query(uint flags) => Snapshot;
 
     public NativeTargetDeviceName GetTargetName(NativeAdapterId adapterId, uint targetId) => new()
@@ -115,13 +117,14 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
         Height = 1440,
     };
 
-    public NativeAdvancedColorInfo GetAdvancedColorInfo(NativeAdapterId adapterId, uint targetId) => new()
-    {
-        Value = targetId == 0 ? 0x3u : 0x1u,
-    };
+    public NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId) =>
+        new(IsSupported: true, IsEnabled: targetId == 0, IsLimitedByPolicy: false);
 
-    public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId) =>
-        (DpiErrorCode, DpiPacket);
+    public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId)
+    {
+        DpiQueryCount++;
+        return (DpiErrorCode, DpiPacket);
+    }
 
     public bool IsPrimaryGdiDevice(string gdiDeviceName) => gdiDeviceName == "SYNTHETIC0";
 

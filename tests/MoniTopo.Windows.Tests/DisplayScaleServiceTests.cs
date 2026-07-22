@@ -78,6 +78,8 @@ public sealed class DisplayScaleServiceTests
 
         Assert.True(supported);
         Assert.Equal(1, relativeScale);
+        Assert.True(DisplayScaleService.TryResolveRelativeScale(packet, 100, out var oneHundredPercent));
+        Assert.Equal(-2, oneHundredPercent);
         Assert.False(unsupported);
         Assert.False(malformed);
     }

@@ -116,13 +116,14 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureInteractiveSession();
-        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, QueryAll());
+        var available = QueryAll();
+        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
             var plannedPath = FindPlannedPath(display.DisplayId, bindings, plan);
-            _ = ResolveRelativeScale(plannedPath.SourceInfo, display.WindowsUiScalePercent);
-            var color = _query.GetAdvancedColorInfo(plannedPath.TargetInfo.AdapterId, plannedPath.TargetInfo.Id);
-            if (display.HdrEnabled && (!color.IsSupported || color.IsForceDisabled))
+            ValidateScaleForPreflight(display, bindings, available);
+            var hdr = _query.GetHdrState(plannedPath.TargetInfo.AdapterId, plannedPath.TargetInfo.Id);
+            if (display.HdrEnabled && (!hdr.IsSupported || hdr.IsLimitedByPolicy))
             {
                 throw new ActivationFailureException(
                     "activation.hdr.unsupported",
@@ -203,10 +204,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         foreach (var display in profile.Displays)
         {
             var path = FindCurrentPath(display.DisplayId, bindings, active);
-            var color = _query.GetAdvancedColorInfo(path.TargetInfo.AdapterId, path.TargetInfo.Id);
-            if (color.IsSupported && !color.IsForceDisabled && color.IsEnabled != display.HdrEnabled)
+            var hdr = _query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            if (hdr.IsSupported && !hdr.IsLimitedByPolicy && hdr.IsEnabled != display.HdrEnabled)
             {
-                _mutation.SetAdvancedColor(path.TargetInfo.AdapterId, path.TargetInfo.Id, display.HdrEnabled);
+                _mutation.SetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id, display.HdrEnabled);
             }
         }
 
@@ -244,10 +245,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             {
                 var relativeScale = ResolveRelativeScale(query, property.SourceAdapterId, property.SourceId, property.WindowsScalePercent);
                 mutation.SetDpiScale(property.SourceAdapterId, property.SourceId, relativeScale);
-                var color = query.GetAdvancedColorInfo(property.TargetAdapterId, property.TargetId);
-                if (color.IsSupported && !color.IsForceDisabled && color.IsEnabled != property.HdrEnabled)
+                var hdr = query.GetHdrState(property.TargetAdapterId, property.TargetId);
+                if (hdr.IsSupported && !hdr.IsLimitedByPolicy && hdr.IsEnabled != property.HdrEnabled)
                 {
-                    mutation.SetAdvancedColor(property.TargetAdapterId, property.TargetId, property.HdrEnabled);
+                    mutation.SetHdrState(property.TargetAdapterId, property.TargetId, property.HdrEnabled);
                 }
             }
 
@@ -267,8 +268,8 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                     property.SourceAdapterId.LowPart,
                     property.SourceAdapterId.HighPart,
                     property.SourceId));
-                var color = query.GetAdvancedColorInfo(property.TargetAdapterId, property.TargetId);
-                var hdrEnabled = color.IsSupported && color.IsEnabled && !color.IsForceDisabled;
+                var hdr = query.GetHdrState(property.TargetAdapterId, property.TargetId);
+                var hdrEnabled = hdr.IsSupported && hdr.IsEnabled;
                 if (!scale.IsSupported || scale.CurrentPercent != property.WindowsScalePercent || hdrEnabled != property.HdrEnabled)
                 {
                     return false;
@@ -286,14 +287,42 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     private RollbackDisplayProperty CaptureRollbackProperty(NativePathInfo path)
     {
         var scale = QueryScale(path.SourceInfo);
-        var color = _query.GetAdvancedColorInfo(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+        var hdr = _query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
         return new RollbackDisplayProperty(
             path.SourceInfo.AdapterId,
             path.SourceInfo.Id,
             path.TargetInfo.AdapterId,
             path.TargetInfo.Id,
             scale.CurrentPercent!.Value,
-            color.IsSupported && color.IsEnabled && !color.IsForceDisabled);
+            hdr.IsSupported && hdr.IsEnabled);
+    }
+
+    private void ValidateScaleForPreflight(
+        DesiredDisplayPath display,
+        IReadOnlyList<ResolvedIdentityBinding> bindings,
+        NativeDisplaySnapshot available)
+    {
+        if (!UndocumentedDpiScaleContract.ScalePercentages.Contains(display.WindowsUiScalePercent))
+        {
+            throw new ActivationFailureException(
+                "activation.scaling.unsupported",
+                $"Windows cannot apply the saved {display.WindowsUiScalePercent}% display scale on this display.");
+        }
+
+        var binding = bindings.Single(item => string.Equals(
+            item.DisplayId,
+            display.DisplayId,
+            StringComparison.OrdinalIgnoreCase));
+        var activePath = available.Paths.FirstOrDefault(path =>
+            (path.Flags & ActivePath) != 0 &&
+            string.Equals(
+                TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id),
+                binding.RuntimeId,
+                StringComparison.Ordinal));
+        if ((activePath.Flags & ActivePath) != 0)
+        {
+            _ = ResolveRelativeScale(activePath.SourceInfo, display.WindowsUiScalePercent);
+        }
     }
 
     private int ResolveRelativeScale(NativePathSourceInfo source, int desiredPercent) =>
