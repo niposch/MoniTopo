@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using MoniTopo.App.Popup;
@@ -57,24 +58,19 @@ public sealed class WindowStartupSmokeTests
                 0,
                 "Available"));
             var mainRequested = false;
-            var settingsRequested = false;
             var updateRequested = false;
             window.MainWindowRequested += (_, _) => mainRequested = true;
-            window.SettingsRequested += (_, _) => settingsRequested = true;
             window.UpdateActionRequested += (_, _) => updateRequested = true;
 
             window.Show();
             window.UpdateLayout();
             var buttons = LogicalDescendants<Button>(window).ToArray();
-            buttons.Single(button => Equals(button.Content, "Open MoniTopo"))
+            buttons.Single(button => AutomationProperties.GetName(button) == "Open MoniTopo")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            buttons.Single(button => Equals(button.Content, "Settings"))
-                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            buttons.Single(button => button.Content?.ToString()?.Contains("Download update", StringComparison.Ordinal) == true)
+            buttons.Single(button => AutomationProperties.GetName(button) == "Update MoniTopo")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             Assert.True(mainRequested);
-            Assert.True(settingsRequested);
             Assert.True(updateRequested);
             window.Close();
         });

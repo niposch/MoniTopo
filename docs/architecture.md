@@ -72,11 +72,13 @@ A message-only window owns global hotkeys and display/device/settings messages. 
 
 The WinForms `NotifyIcon` is limited to tray ownership, its compact context menu, tooltip, and short direct-hotkey notifications. Popup-originated activation reports through inline events and deliberately suppresses the redundant balloon. The icon is drawn deterministically from the same offset-monitor geometry retained in `Assets/tray-icon.svg`.
 
+The popup presents profiles as a compact three-column quick-access grid. A single gear action opens the main Profiles page; Settings remains a tab inside that window rather than a duplicate tray destination. Available, downloading, and restart-ready update states occupy a bottom strip, and all surfaces use system-theme Fluent resources.
+
 ## Profile management and preview
 
 `ProfileManagementService` is the transaction boundary for profile CRUD. Save and update both use the production read-only capture pipeline, normalize the result, and persist through `ConfigurationSession` and the atomic JSON store. A new capture is compared with existing profiles before insertion; an exact duplicate is returned to the UI so it can offer Update instead. Rename, order, delete, hotkey, and remembered-binding changes are validated as complete candidate configurations before saving.
 
-The main window does not edit display geometry. `DisplayLayoutPreview` maps saved physical-pixel rectangles into an available DIP viewport, preserving relative position and adding a small stack offset for clone members. Details remain text-accessible and include resolution, friendly refresh, Windows scale, HDR, and primary state. Manual identity binding only lists currently connected candidates and therefore cannot bind a physically absent display.
+The main window does not edit display geometry. `DisplayLayoutPreview` maps saved physical-pixel rectangles into an available DIP viewport, preserving relative position and adding a small stack offset for clone members. Each monitor rectangle and its accessible tooltip show resolution, friendly refresh, explicitly labelled Windows scale, HDR, and primary state. Manual identity binding only lists currently connected candidates and therefore cannot bind a physically absent display.
 
 ## Startup and updates
 

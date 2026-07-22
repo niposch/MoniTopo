@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using MoniTopo.Core.Models;
@@ -22,8 +23,6 @@ public partial class PopupWindow : Window
     public event EventHandler<Guid>? ActivateProfileRequested;
 
     public event EventHandler? MainWindowRequested;
-
-    public event EventHandler? SettingsRequested;
 
     public event EventHandler? UpdateActionRequested;
 
@@ -58,14 +57,24 @@ public partial class PopupWindow : Window
             Hide();
             e.Handled = true;
         }
-        else if (e.Key == Key.Up)
+        else if (e.Key == Key.Left)
         {
             ViewModel.MoveSelection(-1);
             e.Handled = true;
         }
-        else if (e.Key == Key.Down)
+        else if (e.Key == Key.Right)
         {
             ViewModel.MoveSelection(1);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Up)
+        {
+            ViewModel.MoveSelection(-3);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Down)
+        {
+            ViewModel.MoveSelection(3);
             e.Handled = true;
         }
         else if (e.Key == Key.Enter && !ViewModel.IsBusy)
@@ -75,12 +84,15 @@ public partial class PopupWindow : Window
         }
     }
 
-    private void OnProfileDoubleClick(object sender, MouseButtonEventArgs e) => RequestSelectedActivation();
-
-    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    private void OnProfileClick(object sender, MouseButtonEventArgs e)
     {
-        Hide();
-        SettingsRequested?.Invoke(this, EventArgs.Empty);
+        if (e.OriginalSource is DependencyObject source &&
+            ItemsControl.ContainerFromElement(ProfileList, source) is ListBoxItem item)
+        {
+            ProfileList.SelectedItem = item.DataContext;
+            RequestSelectedActivation();
+            e.Handled = true;
+        }
     }
 
     private void OnMainWindowClick(object sender, RoutedEventArgs e)

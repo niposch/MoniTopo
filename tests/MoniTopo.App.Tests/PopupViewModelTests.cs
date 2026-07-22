@@ -42,11 +42,16 @@ public sealed class PopupViewModelTests
         Assert.Equal(0, viewModel.SelectedIndex);
         viewModel.MoveSelection(1);
         Assert.Equal(1, viewModel.SelectedIndex);
+        viewModel.MoveSelection(-3);
+        Assert.Equal(0, viewModel.SelectedIndex);
+        viewModel.MoveSelection(3);
+        Assert.Equal(1, viewModel.SelectedIndex);
         viewModel.BeginActivation("Movie");
         viewModel.MoveSelection(-1);
 
         Assert.Equal(1, viewModel.SelectedIndex);
         Assert.True(viewModel.IsBusy);
+        Assert.True(viewModel.HasStatusMessage);
         Assert.Contains("Movie", viewModel.StatusMessage, StringComparison.Ordinal);
     }
 

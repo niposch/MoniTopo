@@ -114,13 +114,11 @@ public partial class App : System.Windows.Application, IDisposable
             : "Development build";
         _popupWindow = new PopupWindow(versionText);
         _popupWindow.MainWindowRequested += (_, _) => OpenMainWindow();
-        _popupWindow.SettingsRequested += (_, _) => OpenSettingsWindow();
         _popupWindow.UpdateActionRequested += OnPopupUpdateActionRequested;
         _popupWindow.ActivateProfileRequested += OnPopupActivateRequested;
         _tray = new TrayIconService();
         _tray.TogglePopupRequested += (_, _) => TogglePopup();
         _tray.OpenMainWindowRequested += (_, _) => OpenMainWindow();
-        _tray.OpenSettingsRequested += (_, _) => OpenSettingsWindow();
         _tray.ExitRequested += (_, _) => ExitApplication();
 
         _messageWindow = new ApplicationMessageWindow();

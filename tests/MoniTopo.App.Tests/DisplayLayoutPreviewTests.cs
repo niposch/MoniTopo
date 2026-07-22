@@ -18,6 +18,9 @@ public sealed class DisplayLayoutPreviewTests
         Assert.True(preview.Single(item => item.DisplayId == primary.DisplayId).IsPrimary);
         Assert.True(preview.Single(item => item.DisplayId == left.DisplayId).Left < preview.Single(item => item.DisplayId == primary.DisplayId).Left);
         Assert.All(preview, item => Assert.True(item.Width > 0 && item.Height > 0));
+        Assert.All(preview, item => Assert.Contains("Scale 100%", item.CharacteristicsText, StringComparison.Ordinal));
+        Assert.Equal("2560 × 1440", preview.Single(item => item.DisplayId == primary.DisplayId).ResolutionText);
+        Assert.Contains("Primary", preview.Single(item => item.DisplayId == primary.DisplayId).Details, StringComparison.Ordinal);
     }
 
     [Fact]

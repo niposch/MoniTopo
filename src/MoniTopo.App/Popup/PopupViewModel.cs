@@ -12,7 +12,10 @@ public sealed record PopupProfileItem(
     string Name,
     int ActiveDisplayCount,
     string HotkeyText,
-    bool IsActive);
+    bool IsActive)
+{
+    public string DisplayCountText => $"{ActiveDisplayCount} display{(ActiveDisplayCount == 1 ? string.Empty : "s")}";
+}
 
 public sealed class PopupViewModel : INotifyPropertyChanged
 {
@@ -52,6 +55,8 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         get => _isBusy;
         private set => SetField(ref _isBusy, value);
     }
+
+    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
 
     public string VersionText { get; }
 
@@ -101,7 +106,7 @@ public sealed class PopupViewModel : INotifyPropertyChanged
             return;
         }
 
-        SelectedIndex = Math.Clamp(SelectedIndex + Math.Sign(direction), 0, Profiles.Count - 1);
+        SelectedIndex = Math.Clamp(SelectedIndex + direction, 0, Profiles.Count - 1);
     }
 
     public void BeginActivation(string profileName)
@@ -151,6 +156,10 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         if (propertyName == nameof(SelectedIndex))
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedProfile)));
+        }
+        else if (propertyName == nameof(StatusMessage))
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasStatusMessage)));
         }
     }
 }

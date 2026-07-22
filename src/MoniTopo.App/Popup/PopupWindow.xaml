@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="MoniTopo profiles"
-        Width="330"
+        Width="360"
         MaxHeight="560"
         SizeToContent="Height"
         WindowStyle="None"
@@ -19,8 +19,7 @@
     <Border BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}"
             BorderThickness="1"
             Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-            CornerRadius="8"
-            Padding="0">
+            CornerRadius="8">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -30,111 +29,183 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Margin="14,11,14,9">
-                <TextBlock Text="Current setup" FontSize="11" Opacity="0.7" />
-                <TextBlock Text="{Binding CurrentState}" FontSize="16" FontWeight="SemiBold" />
+            <StackPanel Grid.Row="0" Margin="16,13,16,8">
+                <TextBlock Text="Display profiles" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock FontSize="11" Opacity="0.65">
+                    <Run Text="Current: " /><Run Text="{Binding CurrentState, Mode=OneWay}" />
+                </TextBlock>
             </StackPanel>
 
-            <Separator Grid.Row="0" VerticalAlignment="Bottom" />
+            <Grid Grid.Row="1" Margin="7,2,7,9">
+                <TextBlock Text="No profiles saved"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Margin="12,22"
+                           Opacity="0.62">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Profiles.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <ListBox x:Name="ProfileList"
+                         ItemsSource="{Binding Profiles}"
+                         SelectedIndex="{Binding SelectedIndex, Mode=TwoWay}"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         PreviewMouseLeftButtonUp="OnProfileClick"
+                         AutomationProperties.Name="Display profiles">
+                    <ListBox.Style>
+                        <Style TargetType="ListBox">
+                            <Setter Property="IsEnabled" Value="True" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.Style>
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel ItemWidth="114" ItemHeight="102" />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Width" Value="114" />
+                            <Setter Property="Height" Value="102" />
+                            <Setter Property="Padding" Value="4" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="7,7,7,6"
+                                    CornerRadius="5"
+                                    Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                    BorderThickness="1">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource SurfaceStrokeColorDefaultBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.AccentColorBrushKey}}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="38" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid HorizontalAlignment="Center" Width="48" Height="32">
+                                        <Border Width="31" Height="20"
+                                                HorizontalAlignment="Left"
+                                                VerticalAlignment="Top"
+                                                CornerRadius="2"
+                                                BorderThickness="2"
+                                                BorderBrush="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <Border Width="26" Height="17"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Bottom"
+                                                CornerRadius="2"
+                                                BorderThickness="2"
+                                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                                BorderBrush="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        <TextBlock Text="●"
+                                                   FontSize="8"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Top"
+                                                   Foreground="{DynamicResource {x:Static SystemColors.AccentColorBrushKey}}"
+                                                   Visibility="{Binding IsActive, Converter={StaticResource BooleanToVisibility}}"
+                                                   AutomationProperties.Name="Active profile" />
+                                    </Grid>
+                                    <TextBlock Grid.Row="1"
+                                               Text="{Binding Name}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               TextAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <TextBlock FontSize="10" Opacity="0.62">
+                                            <Run Text="{Binding DisplayCountText, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text=" · " FontSize="10" Opacity="0.45">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HotkeyText}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding HotkeyText}" FontSize="10" Opacity="0.62" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
 
-            <ListBox x:Name="ProfileList"
-                     Grid.Row="1"
-                     ItemsSource="{Binding Profiles}"
-                     SelectedIndex="{Binding SelectedIndex, Mode=TwoWay}"
-                     BorderThickness="0"
-                     Padding="4"
-                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                     MouseDoubleClick="OnProfileDoubleClick">
-                <ListBox.Style>
-                    <Style TargetType="ListBox">
-                        <Setter Property="IsEnabled" Value="True" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
-                                <Setter Property="IsEnabled" Value="False" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </ListBox.Style>
-                <ListBox.ItemContainerStyle>
-                    <Style TargetType="ListBoxItem">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="8,7" />
-                        <Setter Property="MinHeight" Value="44" />
-                    </Style>
-                </ListBox.ItemContainerStyle>
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="18" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0"
-                                       Text="●"
-                                       FontSize="9"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsActive, Converter={StaticResource BooleanToVisibility}}"
-                                       AutomationProperties.Name="Active profile" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                <TextBlock FontSize="11" Opacity="0.68">
-                                    <Run Text="▣ " /><Run Text="{Binding ActiveDisplayCount, Mode=OneWay}" /><Run Text=" displays" />
-                                </TextBlock>
-                            </StackPanel>
-                            <TextBlock Grid.Column="2"
-                                       Text="{Binding HotkeyText}"
-                                       Margin="12,0,2,0"
-                                       Opacity="0.65"
-                                       VerticalAlignment="Center" />
-                        </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-
-            <Border Grid.Row="2" Padding="12,8" Background="{DynamicResource ControlFillColorSecondaryBrush}">
-                <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+            <Border Grid.Row="2"
+                    Padding="12,8"
+                    Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                    Visibility="{Binding HasStatusMessage, Mode=OneWay, Converter={StaticResource BooleanToVisibility}}">
+                <TextBlock Text="{Binding StatusMessage, Mode=OneWay}" TextWrapping="Wrap" />
             </Border>
 
             <Button Grid.Row="3"
-                    Content="{Binding UpdateActionText, Mode=OneWay}"
-                    HorizontalContentAlignment="Left"
-                    Padding="12,8"
-                    BorderThickness="0,1,0,0"
+                    HorizontalContentAlignment="Stretch"
+                    Padding="12,9"
+                    BorderThickness="0,1,0,1"
                     IsEnabled="{Binding CanRunUpdateAction, Mode=OneWay}"
                     Visibility="{Binding ShowUpdateAction, Mode=OneWay, Converter={StaticResource BooleanToVisibility}}"
                     Click="OnUpdateClick"
-                    AutomationProperties.Name="Update MoniTopo" />
-
-            <Grid Grid.Row="4">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <Grid Grid.Row="0">
+                    AutomationProperties.Name="Update MoniTopo">
+                <Grid>
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="22" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Button Grid.Column="0"
-                            Content="Open MoniTopo"
-                            HorizontalContentAlignment="Left"
-                            Padding="12,9"
-                            BorderThickness="0,1,0,0"
-                            Click="OnMainWindowClick" />
-                    <Button Grid.Column="1"
-                            Content="Settings"
-                            HorizontalContentAlignment="Left"
-                            Padding="12,9"
-                            BorderThickness="0,1,0,0"
-                            Click="OnSettingsClick" />
+                    <TextBlock Text="!" FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding UpdateActionText, Mode=OneWay}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="›" FontSize="18" Margin="8,0,0,0" VerticalAlignment="Center" />
                 </Grid>
-                <TextBlock Grid.Row="1"
-                           Text="{Binding VersionText, Mode=OneWay}"
-                           HorizontalAlignment="Right"
-                           Margin="12,5,12,7"
+            </Button>
+
+            <Grid Grid.Row="4" Margin="12,6,7,7">
+                <TextBlock Text="{Binding VersionText, Mode=OneWay}"
+                           VerticalAlignment="Center"
                            FontSize="10"
-                           Opacity="0.48" />
+                           Opacity="0.45" />
+                <Button x:Name="OpenMainWindowButton"
+                        Content="&#xE713;"
+                        FontFamily="Segoe Fluent Icons"
+                        FontSize="16"
+                        Width="34"
+                        Height="30"
+                        Padding="0"
+                        HorizontalAlignment="Right"
+                        Click="OnMainWindowClick"
+                        ToolTip="Open MoniTopo"
+                        AutomationProperties.Name="Open MoniTopo" />
             </Grid>
         </Grid>
     </Border>

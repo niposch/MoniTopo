@@ -109,7 +109,8 @@
                                                         Height="{Binding Height}"
                                                         BorderThickness="2"
                                                         CornerRadius="4"
-                                                        Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
+                                                        Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}"
+                                                        ToolTip="{Binding Details}">
                                                     <Border.Style>
                                                         <Style TargetType="Border">
                                                             <Setter Property="BorderBrush" Value="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
@@ -121,8 +122,21 @@
                                                         </Style>
                                                     </Border.Style>
                                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="5">
-                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock Text="Primary" FontSize="10" HorizontalAlignment="Center">
+                                                        <TextBlock Text="{Binding Label}"
+                                                                   FontWeight="SemiBold"
+                                                                   TextAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding ResolutionText}"
+                                                                   FontSize="10"
+                                                                   TextAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Opacity="0.82" />
+                                                        <TextBlock Text="{Binding CharacteristicsText}"
+                                                                   FontSize="9"
+                                                                   TextAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Opacity="0.68" />
+                                                        <TextBlock Text="Primary" FontSize="9" HorizontalAlignment="Center" FontWeight="SemiBold">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
                                                                     <Setter Property="Visibility" Value="Collapsed" />

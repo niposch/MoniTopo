@@ -10,6 +10,8 @@ public sealed record DisplayPreviewItem(
     double Width,
     double Height,
     bool IsPrimary,
+    string ResolutionText,
+    string CharacteristicsText,
     string Details,
     int ZIndex);
 
@@ -44,7 +46,10 @@ public static class DisplayLayoutPreview
             Math.Max(36, display.SourceResolution.Width * scale),
             Math.Max(24, display.SourceResolution.Height * scale),
             display.IsPrimary,
-            $"{display.SourceResolution.Width} × {display.SourceResolution.Height}  {display.RefreshRate.Hertz:0.##} Hz  {display.WindowsUiScalePercent}%  HDR {(display.HdrEnabled ? "On" : "Off")}",
+            $"{display.SourceResolution.Width} × {display.SourceResolution.Height}",
+            $"{display.RefreshRate.Hertz:0.##} Hz · Scale {display.WindowsUiScalePercent}% · HDR {(display.HdrEnabled ? "On" : "Off")}",
+            $"{display.SourceResolution.Width} × {display.SourceResolution.Height} · {display.RefreshRate.Hertz:0.##} Hz · Scale {display.WindowsUiScalePercent}% · HDR {(display.HdrEnabled ? "On" : "Off")}" +
+            (display.IsPrimary ? " · Primary" : string.Empty),
             index)).ToArray();
     }
 
