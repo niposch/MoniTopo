@@ -42,7 +42,7 @@ Windows does not document request types `-3` and `-4`, despite Windows Settings 
 - [MartinGC94/DisplayConfig DPI structures](https://github.com/MartinGC94/DisplayConfig/tree/main/src/DisplayConfig/Native/Structs)
 - [lihas/windows-DPI-scaling-sample](https://github.com/lihas/windows-DPI-scaling-sample/blob/master/DPIHelper/DpiHelper.h)
 
-The corresponding setter maps a saved percentage back to the runtime-probed relative index. An unavailable percentage fails preflight; scaling is never silently skipped. A source-specific preflight query is possible only for a currently active target. For a target that the requested topology will enable, preflight validates the saved percentage against the known Windows scale steps and defers the exact relative-index lookup until after the temporary topology is active. That lookup remains inside the recovery-protected activation transaction and any failure rolls the topology back.
+The corresponding setter maps a saved percentage back to the runtime-probed relative index. An unavailable percentage fails preflight; scaling is never silently skipped. Source-specific DPI and target-specific HDR device-info queries are reliable only while that source/target is active; some drivers return `ERROR_GEN_FAILURE` for an inactive target. Preflight queries both capabilities for displays that are already active. For a target that the requested topology will enable, it validates the saved scale against the known Windows steps and defers the exact DPI and HDR checks until after the temporary topology is active. Those checks remain inside the recovery-protected activation transaction and any failure rolls the topology back.
 
 ## Activation and recovery
 

@@ -268,7 +268,7 @@ public sealed class DisplayActivationInteropTests
     }
 
     [Fact]
-    public async Task PreflightDefersScaleQueryForDisplayThatIsCurrentlyInactive()
+    public async Task PreflightDefersScaleAndHdrQueriesForDisplayThatIsCurrentlyInactive()
     {
         var adapter = new NativeAdapterId(1, 0);
         var display = Display("display-2", "source-b", true, new DisplayPoint(0, 0), 1);
@@ -291,6 +291,45 @@ public sealed class DisplayActivationInteropTests
             CancellationToken.None);
 
         Assert.Equal(0, native.DpiQueryCount);
+        Assert.Equal(0, native.HdrQueryCount);
+    }
+
+    [Fact]
+    public async Task PreflightStillValidatesHdrForDisplayThatIsCurrentlyActive()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var display = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0) with
+        {
+            HdrEnabled = true,
+        };
+        var snapshot = AvailableConfiguration(adapter);
+        snapshot.Paths[0].Flags |= 0x1;
+        var native = new FakeDisplayNative
+        {
+            Snapshot = snapshot,
+            DpiPacket = new NativeDpiScaleGet
+            {
+                MinimumRelativeScale = 0,
+                CurrentRelativeScale = 0,
+                MaximumRelativeScale = 0,
+            },
+            HdrState = new NativeHdrState(IsSupported: false, IsEnabled: false, IsLimitedByPolicy: false),
+        };
+        var backend = new GuardedDisplayActivationBackend(
+            new UnusedCaptureService(),
+            native,
+            new DisplayConfigMutationFacade(Authorization(), new FakeMutationApi()),
+            new SupportedSessionGuard(),
+            Path.Combine(Path.GetTempPath(), "MoniTopo.Windows.Tests", Guid.NewGuid().ToString("N")),
+            TimeProvider.System);
+
+        var exception = await Assert.ThrowsAsync<ActivationFailureException>(() => backend.PreflightAsync(
+            Profile([display]),
+            [new ResolvedIdentityBinding(display.DisplayId, TargetKey(adapter, 0), 100)],
+            CancellationToken.None));
+
+        Assert.Equal("activation.hdr.unsupported", exception.ErrorCode);
+        Assert.Equal(1, native.HdrQueryCount);
     }
 
     [Fact]

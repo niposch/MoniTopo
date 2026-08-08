@@ -100,6 +100,10 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
 
     internal int DpiQueryCount { get; private set; }
 
+    internal int HdrQueryCount { get; private set; }
+
+    internal NativeHdrState? HdrState { get; init; }
+
     public NativeDisplaySnapshot Query(uint flags) => Snapshot;
 
     public NativeTargetDeviceName GetTargetName(NativeAdapterId adapterId, uint targetId) => new()
@@ -117,8 +121,11 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
         Height = 1440,
     };
 
-    public NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId) =>
-        new(IsSupported: true, IsEnabled: targetId == 0, IsLimitedByPolicy: false);
+    public NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId)
+    {
+        HdrQueryCount++;
+        return HdrState ?? new NativeHdrState(IsSupported: true, IsEnabled: targetId == 0, IsLimitedByPolicy: false);
+    }
 
     public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId)
     {

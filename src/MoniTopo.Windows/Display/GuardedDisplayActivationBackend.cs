@@ -123,14 +123,11 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
-            var plannedPath = FindPlannedPath(display.DisplayId, bindings, plan);
             ValidateScaleForPreflight(display, bindings, available);
-            var hdr = _query.GetHdrState(plannedPath.TargetInfo.AdapterId, plannedPath.TargetInfo.Id);
-            if (display.HdrEnabled && (!hdr.IsSupported || hdr.IsLimitedByPolicy))
+            var activePath = FindAvailableActivePath(display.DisplayId, bindings, available);
+            if (activePath is { } path)
             {
-                throw new ActivationFailureException(
-                    "activation.hdr.unsupported",
-                    $"HDR cannot be enabled on {display.FriendlyLabel} in the current Windows session.");
+                ValidateHdrForPreflight(display, path);
             }
         }
 
@@ -242,6 +239,13 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         {
             var path = FindCurrentPath(display.DisplayId, bindings, active);
             var hdr = _query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            if (display.HdrEnabled && (!hdr.IsSupported || hdr.IsLimitedByPolicy))
+            {
+                throw new ActivationFailureException(
+                    "activation.hdr.unsupported",
+                    $"HDR cannot be enabled on {display.FriendlyLabel} in the current Windows session.");
+            }
+
             if (hdr.IsSupported && !hdr.IsLimitedByPolicy && hdr.IsEnabled != display.HdrEnabled)
             {
                 _mutation.SetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id, display.HdrEnabled);
@@ -346,19 +350,21 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                 $"Windows cannot apply the saved {display.WindowsUiScalePercent}% display scale on this display.");
         }
 
-        var binding = bindings.Single(item => string.Equals(
-            item.DisplayId,
-            display.DisplayId,
-            StringComparison.OrdinalIgnoreCase));
-        var activePath = available.Paths.FirstOrDefault(path =>
-            (path.Flags & ActivePath) != 0 &&
-            string.Equals(
-                TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id),
-                binding.RuntimeId,
-                StringComparison.Ordinal));
-        if ((activePath.Flags & ActivePath) != 0)
+        var activePath = FindAvailableActivePath(display.DisplayId, bindings, available);
+        if (activePath is { } path)
         {
-            _ = ResolveRelativeScale(activePath.SourceInfo, display.WindowsUiScalePercent);
+            _ = ResolveRelativeScale(path.SourceInfo, display.WindowsUiScalePercent);
+        }
+    }
+
+    private void ValidateHdrForPreflight(DesiredDisplayPath display, NativePathInfo activePath)
+    {
+        var hdr = _query.GetHdrState(activePath.TargetInfo.AdapterId, activePath.TargetInfo.Id);
+        if (display.HdrEnabled && (!hdr.IsSupported || hdr.IsLimitedByPolicy))
+        {
+            throw new ActivationFailureException(
+                "activation.hdr.unsupported",
+                $"HDR cannot be enabled on {display.FriendlyLabel} in the current Windows session.");
         }
     }
 
@@ -399,16 +405,25 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         return relativeScale;
     }
 
-    private static NativePathInfo FindPlannedPath(
+    private static NativePathInfo? FindAvailableActivePath(
         string displayId,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
-        NativeDisplaySnapshot plan)
+        NativeDisplaySnapshot available)
     {
         var binding = bindings.Single(item => string.Equals(item.DisplayId, displayId, StringComparison.OrdinalIgnoreCase));
-        return plan.Paths.Single(path => string.Equals(
-            TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id),
-            binding.RuntimeId,
-            StringComparison.Ordinal));
+        foreach (var path in available.Paths)
+        {
+            if ((path.Flags & ActivePath) != 0 &&
+                string.Equals(
+                    TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id),
+                    binding.RuntimeId,
+                    StringComparison.Ordinal))
+            {
+                return path;
+            }
+        }
+
+        return null;
     }
 
     private static NativePathInfo FindCurrentPath(
