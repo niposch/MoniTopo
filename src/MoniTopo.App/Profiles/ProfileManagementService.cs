@@ -35,7 +35,7 @@ public sealed class ProfileManagementService(
             null,
             snapshot.ActivePaths,
             snapshot.PrimaryDisplayId,
-            2,
+            DisplayProfileCaptureSchema.Current,
             []));
         var duplicate = configuration.Current.Profiles.FirstOrDefault(existing => matcher.Match(existing, snapshot).IsMatch);
         if (duplicate is null)
@@ -61,7 +61,7 @@ public sealed class ProfileManagementService(
             UpdatedUtc = _timeProvider.GetUtcNow(),
             Displays = snapshot.ActivePaths,
             PrimaryDisplayId = snapshot.PrimaryDisplayId,
-            CaptureSchemaVersion = 2,
+            CaptureSchemaVersion = DisplayProfileCaptureSchema.Current,
             LastSuccessfulIdentityBindings = [],
         });
         await ReplaceAsync(updated, cancellationToken).ConfigureAwait(false);

@@ -35,7 +35,8 @@ public sealed record ActivationResult(
     bool MutationBegan,
     bool RollbackAttempted,
     bool RollbackSucceeded,
-    bool EmergencyFallbackUsed)
+    bool EmergencyFallbackUsed,
+    string? TechnicalDetails = null)
 {
     public static ActivationResult Busy { get; } = new(
         ActivationOutcome.Busy,
@@ -49,10 +50,22 @@ public sealed record ActivationResult(
 
 public sealed record ActivationRollbackSnapshot(Guid TransactionId, int SchemaVersion, string DataPath);
 
-public class ActivationFailureException(string errorCode, string message, Exception? innerException = null)
-    : Exception(message, innerException)
+public class ActivationFailureException : Exception
 {
-    public string ErrorCode { get; } = errorCode;
+    public ActivationFailureException(
+        string errorCode,
+        string message,
+        Exception? innerException = null,
+        string? technicalDetails = null)
+        : base(message, innerException)
+    {
+        ErrorCode = errorCode;
+        TechnicalDetails = technicalDetails;
+    }
+
+    public string ErrorCode { get; }
+
+    public string? TechnicalDetails { get; }
 }
 
 public interface IDisplayActivationBackend
@@ -254,7 +267,8 @@ public sealed class ProfileActivationService(
                 mutationBegan,
                 rollbackAttempted,
                 rollbackSucceeded,
-                fallbackUsed);
+                fallbackUsed,
+                failure.TechnicalDetails ?? failure.InnerException?.ToString());
         }
         finally
         {

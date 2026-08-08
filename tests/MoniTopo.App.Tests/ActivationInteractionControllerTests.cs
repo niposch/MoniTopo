@@ -65,6 +65,32 @@ public sealed class ActivationInteractionControllerTests
     }
 
     [Fact]
+    public async Task ActivationFailureIsWrittenWithTechnicalDetails()
+    {
+        var messages = new List<string>();
+        var failure = new ActivationResult(
+            ActivationOutcome.Failed,
+            "Windows rejected the configuration.",
+            "activation.validation.rejected",
+            false,
+            false,
+            false,
+            false,
+            "SetDisplayConfig failed with native error 87.");
+        var controller = new ActivationInteractionController(
+            new FakeActivator(failure),
+            new FakeNotifications(),
+            _ => { },
+            messages.Add);
+
+        await controller.ActivateAsync(Profile(), ActivationOrigin.MainWindow);
+
+        var message = Assert.Single(messages);
+        Assert.Contains("activation.validation.rejected", message, StringComparison.Ordinal);
+        Assert.Contains("native error 87", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HotkeyRouterTogglesPopupOrActivatesMappedProfile()
     {
         var profile = Profile();

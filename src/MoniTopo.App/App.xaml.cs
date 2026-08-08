@@ -130,7 +130,8 @@ public partial class App : System.Windows.Application, IDisposable
         _activationInteraction = new ActivationInteractionController(
             _profileActivator,
             _tray,
-            enabled => _ = _hotkeys.SetProfileHotkeysEnabled(enabled));
+            enabled => _ = _hotkeys.SetProfileHotkeysEnabled(enabled),
+            message => _diagnosticLog.Write("Activation", message));
         _activationInteraction.PopupProgressChanged += (_, progress) => _popupWindow.ViewModel.ReportProgress(progress.Message);
         _hotkeyRouter = new HotkeyCommandRouter(
             () => _configuration.Current.Profiles,

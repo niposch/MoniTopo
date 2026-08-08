@@ -21,7 +21,7 @@ public sealed class ProfileManagementServiceTests
 
         Assert.Null(result.ExistingMatch);
         Assert.Equal("Desktop", result.Profile.Name);
-        Assert.Equal(2, result.Profile.CaptureSchemaVersion);
+        Assert.Equal(DisplayProfileCaptureSchema.Current, result.Profile.CaptureSchemaVersion);
         Assert.Equal([result.Profile.Id], fixture.Session.Current.ProfileOrder);
         Assert.Equal(1, fixture.Store.SaveCount);
     }

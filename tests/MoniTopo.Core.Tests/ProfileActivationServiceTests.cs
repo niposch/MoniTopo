@@ -58,6 +58,22 @@ public sealed class ProfileActivationServiceTests
         Assert.DoesNotContain("apply-core", backend.Calls);
     }
 
+    [Fact]
+    public async Task ValidationFailurePreservesTechnicalDetailsForDiagnostics()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            FailingCall = "validate",
+            FailingTechnicalDetails = "Synthetic native error 87.",
+        };
+        var service = CreateService(backend);
+
+        var result = await service.ActivateAsync(profile);
+
+        Assert.Equal("Synthetic native error 87.", result.TechnicalDetails);
+    }
+
     [Theory]
     [InlineData("scale")]
     [InlineData("hdr")]
@@ -158,6 +174,8 @@ public sealed class ProfileActivationServiceTests
 
         internal string? FailingCall { get; init; }
 
+        internal string? FailingTechnicalDetails { get; init; }
+
         internal bool RollbackResult { get; init; } = true;
 
         internal bool FallbackResult { get; init; }
@@ -228,7 +246,10 @@ public sealed class ProfileActivationServiceTests
         {
             Calls.Add(call);
             return FailingCall == call
-                ? Task.FromException(new ActivationFailureException($"activation.{call}", $"Synthetic {call} failure."))
+                ? Task.FromException(new ActivationFailureException(
+                    $"activation.{call}",
+                    $"Synthetic {call} failure.",
+                    technicalDetails: FailingTechnicalDetails))
                 : Task.CompletedTask;
         }
     }

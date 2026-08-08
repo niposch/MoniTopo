@@ -41,6 +41,28 @@ public sealed class NativeLayoutTests
 
         Assert.Equal(3u, source.CloneGroupId);
         Assert.Equal(7u, source.SourceModeInfoIndex);
+        Assert.Equal(5u, target.DesktopModeInfoIndex);
         Assert.Equal(11u, target.TargetModeInfoIndex);
+    }
+
+    [Fact]
+    public void PathModeIndexesFollowTheVirtualModeSupportFlag()
+    {
+        var direct = new NativePathInfo
+        {
+            SourceInfo = new NativePathSourceInfo { ModeInfoIndex = 2 },
+            TargetInfo = new NativePathTargetInfo { ModeInfoIndex = 5 },
+        };
+        var virtualPath = new NativePathInfo
+        {
+            SourceInfo = new NativePathSourceInfo { ModeInfoIndex = (2u << 16) | 0xFFFFu },
+            TargetInfo = new NativePathTargetInfo { ModeInfoIndex = (5u << 16) | 0xFFFFu },
+            Flags = 0x8,
+        };
+
+        Assert.Equal(2u, direct.SourceModeInfoIndex);
+        Assert.Equal(5u, direct.TargetModeInfoIndex);
+        Assert.Equal(2u, virtualPath.SourceModeInfoIndex);
+        Assert.Equal(5u, virtualPath.TargetModeInfoIndex);
     }
 }

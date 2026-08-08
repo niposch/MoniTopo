@@ -22,6 +22,8 @@ dotnet test MoniTopo.slnx --configuration Release --no-build --collect:"XPlat Co
 
 Run the WPF project with `dotnet run --project src/MoniTopo.App`. Normal launches start in the tray after first-run setup; use the tray popup or right-click **Open MoniTopo** to show the Profiles page. Starting the app reads the current display state but does not activate a profile by itself.
 
+Profiles captured by builds before capture schema 3 must be updated from the current Windows setup before activation. Those builds stored generic Advanced Color activity instead of the Windows HDR user toggle, so MoniTopo cannot infer the correct saved HDR state during migration.
+
 The solution separates portable domain code (`MoniTopo.Core`), Windows integration (`MoniTopo.Windows`), WPF UI (`MoniTopo.App`), and the recovery companion (`MoniTopo.Recovery`). Test projects contain no real display mutation path.
 
 The Windows tests construct CCD path/mode arrays, rollback files, EDID bytes, HDR flags, and DPI packets in memory. They do not instantiate the default production backend or query monitor state. Run the synthetic suites directly with `dotnet test tests/MoniTopo.Windows.Tests` and `dotnet test tests/MoniTopo.Core.Tests`; sanitized fixture files are under `tests/Fixtures/Synthetic`. The app may use the production service for user-initiated read-only capture; activation composition must pass the guarded authorization object explicitly.

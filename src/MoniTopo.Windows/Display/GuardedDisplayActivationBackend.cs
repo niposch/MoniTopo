@@ -419,8 +419,8 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
 
     private static string CreatePathSignature(NativePathInfo path, NativeModeInfo[] modes)
     {
-        var source = ModeAt(modes, path.SourceInfo.SourceModeInfoIndex, 1).Mode.SourceMode;
-        var target = ModeAt(modes, path.TargetInfo.TargetModeInfoIndex, 2).Mode.TargetMode.TargetVideoSignalInfo;
+        var source = ModeAt(modes, path.SourceModeInfoIndex, 1).Mode.SourceMode;
+        var target = ModeAt(modes, path.TargetModeInfoIndex, 2).Mode.TargetMode.TargetVideoSignalInfo;
         return $"{TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)};" +
             $"{path.SourceInfo.AdapterId.StableKey}:{path.SourceInfo.Id}:{path.SourceInfo.CloneGroupId};" +
             $"{source.Width}x{source.Height}@{source.Position.X},{source.Position.Y};" +

@@ -44,6 +44,19 @@ public sealed class DisplayActivationInteropTests
     }
 
     [Fact]
+    public void CoreMutationFailureRetainsNativeErrorForLocalDiagnostics()
+    {
+        var api = new FakeMutationApi { CoreResult = 87 };
+        var facade = new DisplayConfigMutationFacade(Authorization(), api);
+
+        var exception = Assert.Throws<DisplayActivationException>(() => facade.Validate(
+            new NativeDisplaySnapshot([new NativePathInfo()], [new NativeModeInfo()])));
+
+        Assert.Equal(87, exception.NativeErrorCode);
+        Assert.Contains("native error 87", exception.TechnicalDetails, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DpiAndHdrSettersBuildExpectedPacketsThroughFakeApi()
     {
         var api = new FakeMutationApi();
@@ -94,7 +107,67 @@ public sealed class DisplayActivationInteropTests
         Assert.Equal(0, plan.Modes[0].Mode.SourceMode.Position.X);
         Assert.Equal(2560, plan.Modes[1].Mode.SourceMode.Position.X);
         Assert.Equal(241_500_000UL, plan.Modes[2].Mode.TargetMode.TargetVideoSignalInfo.PixelRate);
-        Assert.All(plan.Paths, path => Assert.Equal(1u, path.Flags));
+        Assert.Collection(
+            plan.Paths,
+            path => AssertVirtualPath(path, sourceModeIndex: 0, targetModeIndex: 2),
+            path => AssertVirtualPath(path, sourceModeIndex: 1, targetModeIndex: 3));
+    }
+
+    [Fact]
+    public void PlanUsesDirectModeIndexesForLegacyPaths()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var first = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0);
+        var second = Display("display-2", "source-b", false, new DisplayPoint(2560, 0), 1);
+        var profile = Profile([first, second]);
+        var bindings = new[]
+        {
+            new ResolvedIdentityBinding(first.DisplayId, TargetKey(adapter, 0), 100),
+            new ResolvedIdentityBinding(second.DisplayId, TargetKey(adapter, 1), 100),
+        };
+
+        var plan = DisplayConfigurationPlanBuilder.Build(
+            profile,
+            bindings,
+            AvailableConfiguration(adapter, supportsVirtualMode: false));
+
+        Assert.Collection(
+            plan.Paths,
+            path => AssertDirectPath(path, sourceModeIndex: 0, targetModeIndex: 2),
+            path => AssertDirectPath(path, sourceModeIndex: 1, targetModeIndex: 3));
+    }
+
+    [Fact]
+    public void PlanRepresentsClonesBySharingSourceModeAndPreservesRefreshBoost()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var first = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0) with
+        {
+            CloneGroupId = "clone-a",
+        };
+        var second = Display("display-2", "source-a", false, new DisplayPoint(0, 0), 1) with
+        {
+            CloneGroupId = "clone-a",
+        };
+        var available = AvailableConfiguration(adapter, supportsVirtualMode: true, boostRefreshRate: true);
+        available.Paths[1].SourceInfo = available.Paths[0].SourceInfo;
+        var profile = Profile([first, second]);
+
+        var plan = DisplayConfigurationPlanBuilder.Build(
+            profile,
+            [
+                new ResolvedIdentityBinding(first.DisplayId, TargetKey(adapter, 0), 100),
+                new ResolvedIdentityBinding(second.DisplayId, TargetKey(adapter, 1), 100),
+            ],
+            available);
+
+        Assert.Single(plan.Modes, mode => mode.InfoType == 1);
+        Assert.All(plan.Paths, path =>
+        {
+            Assert.Equal(0u, path.SourceInfo.SourceModeInfoIndex);
+            Assert.Equal(0xFFFFu, path.SourceInfo.CloneGroupId);
+            Assert.Equal(0x19u, path.Flags);
+        });
     }
 
     [Fact]
@@ -110,6 +183,22 @@ public sealed class DisplayActivationInteropTests
             AvailableConfiguration(adapter)));
 
         Assert.Equal("activation.profile.target-signal-missing", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void PlanRejectsProfilesCapturedBeforeHdrSemanticsWereCorrected()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var display = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0);
+        var profile = Profile([display]) with { CaptureSchemaVersion = 2 };
+
+        var exception = Assert.Throws<ActivationFailureException>(() => DisplayConfigurationPlanBuilder.Build(
+            profile,
+            [new ResolvedIdentityBinding(display.DisplayId, TargetKey(adapter, 0), 100)],
+            AvailableConfiguration(adapter)));
+
+        Assert.Equal("activation.profile.capture-outdated", exception.ErrorCode);
+        Assert.Contains("Update the profile", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -206,27 +295,52 @@ public sealed class DisplayActivationInteropTests
         return authorization;
     }
 
-    private static NativeDisplaySnapshot AvailableConfiguration(NativeAdapterId adapter)
+    private static NativeDisplaySnapshot AvailableConfiguration(
+        NativeAdapterId adapter,
+        bool supportsVirtualMode = true,
+        bool boostRefreshRate = false)
     {
         var paths = new[]
         {
-            AvailablePath(adapter, 0, 0),
-            AvailablePath(adapter, 1, 1),
+            AvailablePath(adapter, 0, 0, supportsVirtualMode, boostRefreshRate),
+            AvailablePath(adapter, 1, 1, supportsVirtualMode, boostRefreshRate),
         };
         return new NativeDisplaySnapshot(paths, []);
     }
 
-    private static NativePathInfo AvailablePath(NativeAdapterId adapter, uint sourceId, uint targetId) => new()
-    {
-        SourceInfo = new NativePathSourceInfo { AdapterId = adapter, Id = sourceId },
-        TargetInfo = new NativePathTargetInfo
+    private static NativePathInfo AvailablePath(
+        NativeAdapterId adapter,
+        uint sourceId,
+        uint targetId,
+        bool supportsVirtualMode,
+        bool boostRefreshRate) => new()
         {
-            AdapterId = adapter,
-            Id = targetId,
-            OutputTechnology = 10,
-            TargetAvailable = 1,
-        },
-    };
+            SourceInfo = new NativePathSourceInfo { AdapterId = adapter, Id = sourceId },
+            TargetInfo = new NativePathTargetInfo
+            {
+                AdapterId = adapter,
+                Id = targetId,
+                OutputTechnology = 10,
+                TargetAvailable = 1,
+            },
+            Flags = (supportsVirtualMode ? 0x8u : 0u) | (boostRefreshRate ? 0x10u : 0u),
+        };
+
+    private static void AssertVirtualPath(NativePathInfo path, uint sourceModeIndex, uint targetModeIndex)
+    {
+        Assert.Equal(0x9u, path.Flags);
+        Assert.Equal(0xFFFFu, path.SourceInfo.CloneGroupId);
+        Assert.Equal(sourceModeIndex, path.SourceInfo.SourceModeInfoIndex);
+        Assert.Equal(0xFFFFu, path.TargetInfo.DesktopModeInfoIndex);
+        Assert.Equal(targetModeIndex, path.TargetInfo.TargetModeInfoIndex);
+    }
+
+    private static void AssertDirectPath(NativePathInfo path, uint sourceModeIndex, uint targetModeIndex)
+    {
+        Assert.Equal(0x1u, path.Flags);
+        Assert.Equal(sourceModeIndex, path.SourceInfo.ModeInfoIndex);
+        Assert.Equal(targetModeIndex, path.TargetInfo.ModeInfoIndex);
+    }
 
     private static DesiredDisplayPath Display(
         string displayId,
@@ -281,7 +395,7 @@ public sealed class DisplayActivationInteropTests
         null,
         displays,
         displays.Single(display => display.IsPrimary).DisplayId,
-        2,
+        DisplayProfileCaptureSchema.Current,
         []);
 
     private static string TargetKey(NativeAdapterId adapter, uint targetId) => $"{adapter.StableKey}:T{targetId}";
@@ -298,10 +412,12 @@ public sealed class DisplayActivationInteropTests
 
         internal int HdrResult { get; init; }
 
+        internal int CoreResult { get; init; }
+
         public int SetDisplayConfig(NativePathInfo[] paths, NativeModeInfo[] modes, uint flags)
         {
             CoreFlags.Add(flags);
-            return 0;
+            return CoreResult;
         }
 
         public int SetDpiScale(ref NativeDpiScaleSet packet)

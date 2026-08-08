@@ -30,7 +30,8 @@ public sealed class ProfileActivationAdapter(ProfileActivationService service) :
 public sealed class ActivationInteractionController(
     IProfileActivator activator,
     IUserNotificationService notifications,
-    Action<bool> setProfileHotkeysEnabled)
+    Action<bool> setProfileHotkeysEnabled,
+    Action<string>? logFailure = null)
 {
     public event EventHandler<ActivationProgress>? PopupProgressChanged;
 
@@ -48,6 +49,14 @@ public sealed class ActivationInteractionController(
                 ? new Progress<ActivationProgress>(value => PopupProgressChanged?.Invoke(this, value))
                 : null;
             var result = await activator.ActivateAsync(profile, progress, cancellationToken).ConfigureAwait(false);
+            if (result.Outcome == ActivationOutcome.Failed)
+            {
+                var detail = string.IsNullOrWhiteSpace(result.TechnicalDetails)
+                    ? string.Empty
+                    : $" {result.TechnicalDetails}";
+                logFailure?.Invoke($"{result.ErrorCode ?? "activation.failed"}: {result.Message}{detail}");
+            }
+
             RouteResult(profile, origin, result);
             return result;
         }

@@ -90,13 +90,13 @@ public sealed class CcdCaptureService : IDisplayCaptureService
         {
             var path = activeNativePaths[index];
             var sourceKey = SourceKey(path.SourceInfo.AdapterId, path.SourceInfo.Id);
-            var sourceModeIndex = checked((int)path.SourceInfo.SourceModeInfoIndex);
+            var sourceModeIndex = checked((int)path.SourceModeInfoIndex);
             if (sourceModeIndex < 0 || sourceModeIndex >= raw.Modes.Length || raw.Modes[sourceModeIndex].InfoType != SourceModeType)
             {
                 throw new DisplayCaptureException(0, "Windows returned an incomplete source mode for an active display.");
             }
 
-            var targetModeIndex = checked((int)path.TargetInfo.TargetModeInfoIndex);
+            var targetModeIndex = checked((int)path.TargetModeInfoIndex);
             if (targetModeIndex < 0 || targetModeIndex >= raw.Modes.Length || raw.Modes[targetModeIndex].InfoType != TargetModeType)
             {
                 throw new DisplayCaptureException(0, "Windows returned an incomplete target signal for an active display.");

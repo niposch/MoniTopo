@@ -1,5 +1,10 @@
 namespace MoniTopo.Core.Models;
 
+public static class DisplayProfileCaptureSchema
+{
+    public const int Current = 3;
+}
+
 [Flags]
 public enum HotkeyModifiers
 {

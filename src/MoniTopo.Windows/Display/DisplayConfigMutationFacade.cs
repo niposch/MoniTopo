@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using MoniTopo.Core.Activation;
 
@@ -113,7 +114,8 @@ internal sealed class DisplayConfigMutationFacade
         ThrowIfFailed(
             _api.SetDpiScale(ref packet),
             "activation.scaling.failed",
-            "Windows could not apply the saved display scaling.");
+            "Windows could not apply the saved display scaling.",
+            "DisplayConfigSetDeviceInfo (DPI scale)");
     }
 
     internal void SetHdrState(NativeAdapterId adapterId, uint targetId, bool enabled)
@@ -134,7 +136,8 @@ internal sealed class DisplayConfigMutationFacade
             ThrowIfFailed(
                 hdrResult,
                 "activation.hdr.failed",
-                "Windows could not apply the saved HDR state.");
+                "Windows could not apply the saved HDR state.",
+                "DisplayConfigSetDeviceInfo (HDR)");
         }
 
         var packet = new NativeAdvancedColorStateSet
@@ -145,11 +148,12 @@ internal sealed class DisplayConfigMutationFacade
         ThrowIfFailed(
             _api.SetAdvancedColorState(ref packet),
             "activation.hdr.failed",
-            "Windows could not apply the saved HDR state.");
+            "Windows could not apply the saved HDR state.",
+            "DisplayConfigSetDeviceInfo (Advanced Color)");
     }
 
     private void SetCore(NativeDisplaySnapshot plan, uint flags, string errorCode, string message) =>
-        ThrowIfFailed(_api.SetDisplayConfig(plan.Paths, plan.Modes, flags), errorCode, message);
+        ThrowIfFailed(_api.SetDisplayConfig(plan.Paths, plan.Modes, flags), errorCode, message, "SetDisplayConfig");
 
     private static NativeDeviceInfoHeader CreateHeader(int type, int size, NativeAdapterId adapterId, uint id) => new()
     {
@@ -159,17 +163,30 @@ internal sealed class DisplayConfigMutationFacade
         Id = id,
     };
 
-    private static void ThrowIfFailed(int nativeErrorCode, string errorCode, string message)
+    private static void ThrowIfFailed(
+        int nativeErrorCode,
+        string errorCode,
+        string message,
+        string nativeOperation)
     {
         if (nativeErrorCode != DisplayConfigNativeFacade.ErrorSuccess)
         {
-            throw new DisplayActivationException(errorCode, message, nativeErrorCode);
+            throw new DisplayActivationException(errorCode, message, nativeOperation, nativeErrorCode);
         }
     }
 }
 
-public sealed class DisplayActivationException(string errorCode, string message, int nativeErrorCode)
-    : ActivationFailureException(errorCode, message)
+public sealed class DisplayActivationException(
+    string errorCode,
+    string message,
+    string nativeOperation,
+    int nativeErrorCode)
+    : ActivationFailureException(
+        errorCode,
+        message,
+        technicalDetails: string.Create(
+            CultureInfo.InvariantCulture,
+            $"{nativeOperation} failed with native error {nativeErrorCode} (0x{unchecked((uint)nativeErrorCode):X8})."))
 {
     public int NativeErrorCode { get; } = nativeErrorCode;
 }

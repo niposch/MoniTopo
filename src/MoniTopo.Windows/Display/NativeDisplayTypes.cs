@@ -2,6 +2,24 @@ using System.Runtime.InteropServices;
 
 namespace MoniTopo.Windows.Display;
 
+internal static class NativeDisplayConfigPathFlags
+{
+    internal const uint Active = 0x1;
+    internal const uint SupportVirtualMode = 0x8;
+    internal const uint BoostRefreshRate = 0x10;
+}
+
+internal static class NativeDisplayConfigModeIndexes
+{
+    internal const uint InvalidVirtualIndex = 0xFFFF;
+
+    internal static uint EncodeVirtual(uint modeIndex)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(modeIndex, InvalidVirtualIndex);
+        return (modeIndex << 16) | InvalidVirtualIndex;
+    }
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal readonly record struct NativeAdapterId(uint LowPart, int HighPart)
 {
@@ -90,6 +108,8 @@ internal struct NativePathTargetInfo
     internal int TargetAvailable;
     internal uint StatusFlags;
 
+    internal readonly uint DesktopModeInfoIndex => ModeInfoIndex & 0xFFFF;
+
     internal readonly uint TargetModeInfoIndex => ModeInfoIndex >> 16;
 }
 
@@ -99,6 +119,17 @@ internal struct NativePathInfo
     internal NativePathSourceInfo SourceInfo;
     internal NativePathTargetInfo TargetInfo;
     internal uint Flags;
+
+    internal readonly bool SupportsVirtualMode =>
+        (Flags & NativeDisplayConfigPathFlags.SupportVirtualMode) != 0;
+
+    internal readonly uint SourceModeInfoIndex => SupportsVirtualMode
+        ? SourceInfo.SourceModeInfoIndex
+        : SourceInfo.ModeInfoIndex;
+
+    internal readonly uint TargetModeInfoIndex => SupportsVirtualMode
+        ? TargetInfo.TargetModeInfoIndex
+        : TargetInfo.ModeInfoIndex;
 }
 
 [StructLayout(LayoutKind.Sequential)]

@@ -197,19 +197,19 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
             {
                 AdapterId = adapter,
                 Id = sourceId,
-                ModeInfoIndex = sourceModeIndex << 16,
+                ModeInfoIndex = (sourceModeIndex << 16) | 0xFFFF,
             },
             TargetInfo = new NativePathTargetInfo
             {
                 AdapterId = adapter,
                 Id = targetId,
-                ModeInfoIndex = targetModeIndex << 16,
+                ModeInfoIndex = (targetModeIndex << 16) | 0xFFFF,
                 OutputTechnology = 10,
                 Rotation = 1,
                 Scaling = 1,
                 RefreshRate = new NativeRational(60, 1),
                 TargetAvailable = 1,
             },
-            Flags = active ? 1u : 0u,
+            Flags = (active ? 1u : 0u) | 0x8u,
         };
 }

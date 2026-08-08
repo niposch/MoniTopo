@@ -8,14 +8,19 @@ internal static class DisplayConfigurationPlanBuilder
 {
     private const uint SourceModeType = 1;
     private const uint TargetModeType = 2;
-    private const uint ActivePath = 1;
-    private const uint InvalidCloneGroup = 0xFFFF;
 
     internal static NativeDisplaySnapshot Build(
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
         NativeDisplaySnapshot availableConfiguration)
     {
+        if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.Current)
+        {
+            throw new ActivationFailureException(
+                "activation.profile.capture-outdated",
+                $"{profile.Name} was captured before MoniTopo could distinguish the Windows HDR setting reliably. Update the profile from the current setup before activating it.");
+        }
+
         var bindingByDisplay = bindings.ToDictionary(binding => binding.DisplayId, StringComparer.OrdinalIgnoreCase);
         var targetPaths = availableConfiguration.Paths
             .Where(path => path.TargetInfo.TargetAvailable != 0)
@@ -58,10 +63,6 @@ internal static class DisplayConfigurationPlanBuilder
         }
 
         var paths = new List<NativePathInfo>(profile.Displays.Count);
-        var cloneGroupIds = groups
-            .Where(group => group.Displays.Length > 1)
-            .Select((group, index) => (group.SourceGroupId, Id: checked((uint)index)))
-            .ToDictionary(item => item.SourceGroupId, item => item.Id, StringComparer.Ordinal);
         foreach (var display in profile.Displays)
         {
             if (display.TargetSignal is not DisplayTargetSignal targetSignal)
@@ -99,20 +100,25 @@ internal static class DisplayConfigurationPlanBuilder
                 },
             });
 
-            var cloneGroup = cloneGroupIds.GetValueOrDefault(display.SourceGroupId, InvalidCloneGroup);
+            var supportsVirtualMode = availablePath.SupportsVirtualMode;
+            var sourceModeIndex = sourceModeIndexes[display.SourceGroupId];
             paths.Add(new NativePathInfo
             {
                 SourceInfo = new NativePathSourceInfo
                 {
                     AdapterId = source.AdapterId,
                     Id = source.Id,
-                    ModeInfoIndex = (sourceModeIndexes[display.SourceGroupId] << 16) | cloneGroup,
+                    ModeInfoIndex = supportsVirtualMode
+                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(sourceModeIndex)
+                        : sourceModeIndex,
                 },
                 TargetInfo = new NativePathTargetInfo
                 {
                     AdapterId = availablePath.TargetInfo.AdapterId,
                     Id = availablePath.TargetInfo.Id,
-                    ModeInfoIndex = targetModeIndex << 16,
+                    ModeInfoIndex = supportsVirtualMode
+                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex)
+                        : targetModeIndex,
                     OutputTechnology = availablePath.TargetInfo.OutputTechnology,
                     Rotation = ToNative(display.Orientation),
                     Scaling = ToNative(display.PathScaling),
@@ -120,7 +126,10 @@ internal static class DisplayConfigurationPlanBuilder
                     ScanLineOrdering = targetSignal.ScanLineOrdering,
                     TargetAvailable = 1,
                 },
-                Flags = ActivePath,
+                Flags = NativeDisplayConfigPathFlags.Active |
+                    (availablePath.Flags &
+                        (NativeDisplayConfigPathFlags.SupportVirtualMode |
+                         NativeDisplayConfigPathFlags.BoostRefreshRate)),
             });
         }
 
