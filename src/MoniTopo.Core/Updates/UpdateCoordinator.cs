@@ -94,6 +94,8 @@ public sealed class UpdateCoordinator : IDisposable
 
     public string? CurrentPackageVersion => _client.CurrentPackageVersion;
 
+    public bool IsInstalled => _client.IsInstalled;
+
     public bool AutomaticChecksEnabled => _settings.AutomaticUpdateChecksEnabled;
 
     public event EventHandler<UpdateState>? Changed;

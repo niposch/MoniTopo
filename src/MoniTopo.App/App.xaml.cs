@@ -16,7 +16,6 @@ using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Persistence;
 using MoniTopo.Core.Updates;
-using MoniTopo.Core.Versioning;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
 using MoniTopo.Windows.Startup;
@@ -62,7 +61,11 @@ public partial class App : System.Windows.Application, IDisposable
         var applicationDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MoniTopo");
-        _diagnosticLog = new LocalDiagnosticLog(Path.Combine(applicationDataPath, "logs"));
+        var updateClient = new VelopackUpdateClient();
+        var buildIdentity = ApplicationBuildInfo.Current(updateClient.CurrentPackageVersion, updateClient.IsInstalled);
+        _diagnosticLog = new LocalDiagnosticLog(
+            Path.Combine(applicationDataPath, "logs"),
+            startupMessage: buildIdentity.DiagnosticText);
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
@@ -85,7 +88,7 @@ public partial class App : System.Windows.Application, IDisposable
             startupExecutable.IsPortable,
             new CurrentUserRunRegistry());
         _startupSettings = new StartupSettingsCoordinator(_configuration, runAtLogin);
-        _updates = new UpdateCoordinator(new VelopackUpdateClient(), _configuration);
+        _updates = new UpdateCoordinator(updateClient, _configuration);
         var isFirstRun = !_configuration.Current.ApplicationSettings.FirstRunCompleted;
         if (isFirstRun)
         {
@@ -109,10 +112,7 @@ public partial class App : System.Windows.Application, IDisposable
         }
 
         _mainWindow = new MainWindow();
-        var versionText = ReleaseVersion.TryParse(_updates.CurrentPackageVersion, out var releaseVersion)
-            ? releaseVersion.DisplayVersion
-            : "Development build";
-        _popupWindow = new PopupWindow(versionText);
+        _popupWindow = new PopupWindow(buildIdentity.DisplayVersion);
         _popupWindow.MainWindowRequested += (_, _) => OpenMainWindow();
         _popupWindow.UpdateActionRequested += OnPopupUpdateActionRequested;
         _popupWindow.ActivateProfileRequested += OnPopupActivateRequested;

@@ -14,6 +14,7 @@ jobs:
     runs-on: windows-latest
     env:
       CI: true
+      SMOKE_PACKAGE_VERSION: 2000.101.0
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -30,7 +31,7 @@ jobs:
       - name: Verify formatting
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
       - name: Build
-        run: dotnet build MoniTopo.slnx --configuration Release --no-restore
+        run: dotnet build MoniTopo.slnx --configuration Release --no-restore -p:Version=${{ env.SMOKE_PACKAGE_VERSION }}
       - name: Test Core with coverage
         run: dotnet test tests/MoniTopo.Core.Tests/MoniTopo.Core.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/core
       - name: Enforce Core coverage
@@ -41,10 +42,10 @@ jobs:
       - name: Test application without display mutation
         run: dotnet test tests/MoniTopo.App.Tests/MoniTopo.App.Tests.csproj --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/app
       - name: Publish smoke artifact
-        run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish
+        run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish -p:Version=${{ env.SMOKE_PACKAGE_VERSION }}
       - name: Validate Velopack packaging
         shell: pwsh
-        run: ./eng/Pack-Release.ps1 -PackageVersion 2000.101.0 -PublishDirectory artifacts/publish -OutputDirectory artifacts/releases
+        run: ./eng/Pack-Release.ps1 -PackageVersion ${{ env.SMOKE_PACKAGE_VERSION }} -PublishDirectory artifacts/publish -OutputDirectory artifacts/releases
       - uses: actions/upload-artifact@v7
         with:
           name: MoniTopo-win-x64-smoke

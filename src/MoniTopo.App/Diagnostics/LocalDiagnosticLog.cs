@@ -17,7 +17,8 @@ public sealed class LocalDiagnosticLog
         string directory,
         TimeProvider? timeProvider = null,
         int maximumFiles = 7,
-        long maximumBytes = 1024 * 1024)
+        long maximumBytes = 1024 * 1024,
+        string? startupMessage = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumFiles, 1);
@@ -28,6 +29,10 @@ public sealed class LocalDiagnosticLog
         var timestamp = (timeProvider ?? TimeProvider.System).GetUtcNow()
             .ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
         _logPath = Path.Combine(_directory, $"monitopo-{timestamp}-{Environment.ProcessId}.log");
+        if (!string.IsNullOrWhiteSpace(startupMessage))
+        {
+            Write("Startup", startupMessage);
+        }
     }
 
     public void Write(string area, Exception exception) => Write(area, exception.Message, exception);
@@ -44,7 +49,12 @@ public sealed class LocalDiagnosticLog
             lock (_sync)
             {
                 Directory.CreateDirectory(_directory);
+                var technicalDetails = exception?.Data["MoniTopo.TechnicalDetails"] as string;
                 var detail = exception is null ? string.Empty : $"{Environment.NewLine}{exception}";
+                if (!string.IsNullOrWhiteSpace(technicalDetails))
+                {
+                    detail += $"{Environment.NewLine}Technical details: {technicalDetails}";
+                }
                 var entry = string.Create(
                     CultureInfo.InvariantCulture,
                     $"{DateTimeOffset.UtcNow:O} [{area.Trim()}] {message.Trim()}{detail}{Environment.NewLine}");

@@ -11,6 +11,17 @@ param(
 
 $null = & "$PSScriptRoot\Get-ReleaseVersion.ps1" -PackageVersion $PackageVersion
 
+$mainExecutable = Join-Path $PublishDirectory 'MoniTopo.App.exe'
+if (-not (Test-Path -LiteralPath $mainExecutable -PathType Leaf)) {
+    throw "Published main executable was not found at '$mainExecutable'."
+}
+
+$publishedVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($mainExecutable).ProductVersion
+$publishedPackageVersion = ($publishedVersion -split '\+', 2)[0]
+if ($publishedPackageVersion -cne $PackageVersion) {
+    throw "Published app version '$publishedPackageVersion' does not match package version '$PackageVersion'. Publish and package with the same -p:Version value."
+}
+
 & dotnet tool run vpk -- pack `
     --packId MoniTopo `
     --packVersion $PackageVersion `

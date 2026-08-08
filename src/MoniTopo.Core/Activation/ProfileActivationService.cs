@@ -222,7 +222,8 @@ public sealed class ProfileActivationService(
             var failure = exception as ActivationFailureException ?? new ActivationFailureException(
                 "activation.unexpected",
                 "MoniTopo could not activate the display profile.",
-                exception);
+                exception,
+                exception.Data["MoniTopo.TechnicalDetails"] as string ?? exception.ToString());
             if (mutationBegan && rollbackSnapshot is not null)
             {
                 rollbackAttempted = true;

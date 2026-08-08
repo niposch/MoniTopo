@@ -2,12 +2,12 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using MoniTopo.App.Diagnostics;
 using MoniTopo.App.Interaction;
 using MoniTopo.App.State;
 using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Models;
 using MoniTopo.Core.Updates;
-using MoniTopo.Core.Versioning;
 
 namespace MoniTopo.App.Profiles;
 
@@ -77,9 +77,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public string PopupHotkeyText => HotkeyDisplayText.Format(_configuration.Current.ApplicationSettings.PopupHotkey);
 
-    public string CurrentVersionText => ReleaseVersion.TryParse(_updates.CurrentPackageVersion, out var version)
-        ? version.DisplayVersion
-        : "Development build";
+    public string CurrentVersionText =>
+        ApplicationBuildInfo.Current(_updates.CurrentPackageVersion, _updates.IsInstalled).DisplayVersion;
 
     public string UpdateStatusMessage => _updateState.Message;
 

@@ -22,6 +22,8 @@ dotnet test MoniTopo.slnx --configuration Release --no-build --collect:"XPlat Co
 
 Run the WPF project with `dotnet run --project src/MoniTopo.App`. Normal launches start in the tray after first-run setup; use the tray popup or right-click **Open MoniTopo** to show the Profiles page. Starting the app reads the current display state but does not activate a profile by itself.
 
+Unpackaged Rider/CLI builds use the repository's default package version and show its date form with a `dev` suffix. They do not participate in Velopack update checks because `UpdateManager.IsInstalled` is false. Installed builds take their package version from Velopack. Both write to the same local log directory and identify their channel and complete build version in the first record. Fully exit an installed tray instance before launching from Rider because single-instance coordination is intentionally shared.
+
 Profiles captured by builds before capture schema 3 must be updated from the current Windows setup before activation. Those builds stored generic Advanced Color activity instead of the Windows HDR user toggle, so MoniTopo cannot infer the correct saved HDR state during migration.
 
 The solution separates portable domain code (`MoniTopo.Core`), Windows integration (`MoniTopo.Windows`), WPF UI (`MoniTopo.App`), and the recovery companion (`MoniTopo.Recovery`). Test projects contain no real display mutation path.
@@ -47,7 +49,7 @@ Replace the sample version with the release date/revision. Outputs include the p
 ## Native debugging
 
 - Start with the focused conversion or facade test for the failing API. Tests accept synthetic native structures and report translated Win32 codes without changing displays.
-- Read the newest bounded log under `%LocalAppData%\MoniTopo\logs`; logs retain at most seven 1 MiB files and contain no telemetry.
+- Read the newest bounded log under `%LocalAppData%\MoniTopo\logs`; development and installed builds use this same directory, every primary-process log starts with its build identity, logs retain at most seven 1 MiB files, and they contain no telemetry.
 - CCD buffer changes during capture are expected and retried. Repeated failures should be investigated with the native error code in the log and the documented `QueryDisplayConfig` contract.
 - A Rider or Visual Studio XAML designer warning about `Application.ThemeMode` is suppressed only as `WPF0001` in the WPF project because the built-in Fluent System theme remains experimental in .NET 10.
 - Do not enable the real-display opt-in merely to debug marshalling, conversion, identity, recovery, HDR, or scaling. Each of those paths has a fake-backed focused test.
