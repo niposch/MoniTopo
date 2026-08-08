@@ -12,7 +12,8 @@ internal static class DisplayConfigurationPlanBuilder
     internal static NativeDisplaySnapshot Build(
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
-        NativeDisplaySnapshot availableConfiguration)
+        NativeDisplaySnapshot availableConfiguration,
+        bool forceVirtualModeIndexes = false)
     {
         if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.Current)
         {
@@ -101,19 +102,24 @@ internal static class DisplayConfigurationPlanBuilder
             });
 
             var sourceModeIndex = sourceModeIndexes[display.SourceGroupId];
+            var useVirtualModeIndexes = forceVirtualModeIndexes || availablePath.SupportsVirtualMode;
             paths.Add(new NativePathInfo
             {
                 SourceInfo = new NativePathSourceInfo
                 {
                     AdapterId = source.AdapterId,
                     Id = source.Id,
-                    ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(sourceModeIndex),
+                    ModeInfoIndex = useVirtualModeIndexes
+                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(sourceModeIndex)
+                        : sourceModeIndex,
                 },
                 TargetInfo = new NativePathTargetInfo
                 {
                     AdapterId = availablePath.TargetInfo.AdapterId,
                     Id = availablePath.TargetInfo.Id,
-                    ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex),
+                    ModeInfoIndex = useVirtualModeIndexes
+                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex)
+                        : targetModeIndex,
                     OutputTechnology = availablePath.TargetInfo.OutputTechnology,
                     Rotation = ToNative(display.Orientation),
                     Scaling = ToNative(display.PathScaling),
@@ -169,9 +175,12 @@ internal static class DisplayConfigurationPlanBuilder
             }
         }
 
+        var savedSourceId = TryParseSavedSourceId(displayGroup.Key);
         var candidates = commonSources?
-            .OrderBy(key => key, StringComparer.Ordinal)
             .Select(key => sourceByKey[key])
+            .OrderByDescending(source => string.Equals(SourceKey(source), displayGroup.Key, StringComparison.Ordinal))
+            .ThenByDescending(source => savedSourceId is uint id && source.Id == id)
+            .ThenBy(SourceKey, StringComparer.Ordinal)
             .ToArray() ?? [];
         if (candidates.Length == 0)
         {
@@ -244,6 +253,19 @@ internal static class DisplayConfigurationPlanBuilder
         left.AdapterId == right.AdapterId && left.Id == right.Id;
 
     private static string SourceKey(NativePathSourceInfo source) => $"{source.AdapterId.StableKey}:S{source.Id}";
+
+    private static uint? TryParseSavedSourceId(string sourceGroupId)
+    {
+        var separator = sourceGroupId.LastIndexOf(":S", StringComparison.Ordinal);
+        return separator >= 0 &&
+            uint.TryParse(
+                sourceGroupId.AsSpan(separator + 2),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var sourceId)
+            ? sourceId
+            : null;
+    }
 
     private static string TargetKey(NativeAdapterId adapterId, uint targetId) => $"{adapterId.StableKey}:T{targetId}";
 

@@ -49,7 +49,7 @@ Replace the sample version with the release date/revision. Outputs include the p
 ## Native debugging
 
 - Start with the focused conversion or facade test for the failing API. Tests accept synthetic native structures and report translated Win32 codes without changing displays.
-- Read the newest bounded log under `%LocalAppData%\MoniTopo\logs`; development and installed builds use this same directory, every primary-process log starts with its build identity, logs retain at most seven 1 MiB files, and they contain no telemetry.
+- Read the newest bounded log under `%LocalAppData%\MoniTopo\logs`; development and installed builds use this same directory, every primary-process log starts with its build identity, logs retain at most seven 1 MiB files, and they contain no telemetry. A rejected CCD plan records non-identifying path flags, mode indices, dimensions, positions, and signal timing, but omits adapter/target IDs and monitor identity data.
 - CCD buffer changes during capture are expected and retried. Repeated failures should be investigated with the native error code in the log and the documented `QueryDisplayConfig` contract.
 - A Rider or Visual Studio XAML designer warning about `Application.ThemeMode` is suppressed only as `WPF0001` in the WPF project because the built-in Fluent System theme remains experimental in .NET 10.
 - Do not enable the real-display opt-in merely to debug marshalling, conversion, identity, recovery, HDR, or scaling. Each of those paths has a fake-backed focused test.

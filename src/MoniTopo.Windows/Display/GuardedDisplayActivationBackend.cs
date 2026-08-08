@@ -34,6 +34,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     private readonly string _recoveryRoot;
     private readonly TimeProvider _timeProvider;
     private NativeDisplaySnapshot? _pendingPlan;
+    private NativeDisplaySnapshot? _pendingCompatibilityPlan;
 
     public GuardedDisplayActivationBackend(DisplayMutationAuthorization authorization)
         : this(
@@ -117,6 +118,8 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         cancellationToken.ThrowIfCancellationRequested();
         EnsureInteractiveSession();
         var available = QueryAll();
+        _pendingPlan = null;
+        _pendingCompatibilityPlan = null;
         var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
@@ -132,6 +135,15 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         }
 
         _pendingPlan = plan;
+        if (plan.Paths.Any(path => !path.SupportsVirtualMode))
+        {
+            _pendingCompatibilityPlan = DisplayConfigurationPlanBuilder.Build(
+                profile,
+                bindings,
+                available,
+                forceVirtualModeIndexes: true);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -141,7 +153,32 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _mutation.Validate(GetPendingPlan());
+        var primaryPlan = GetPendingPlan();
+        try
+        {
+            _mutation.Validate(primaryPlan);
+            _pendingCompatibilityPlan = null;
+        }
+        catch (DisplayActivationException primaryFailure) when (_pendingCompatibilityPlan is not null)
+        {
+            var compatibilityPlan = _pendingCompatibilityPlan;
+            try
+            {
+                _mutation.Validate(compatibilityPlan);
+                _pendingPlan = compatibilityPlan;
+                _pendingCompatibilityPlan = null;
+            }
+            catch (DisplayActivationException compatibilityFailure)
+            {
+                throw new ActivationFailureException(
+                    primaryFailure.ErrorCode,
+                    primaryFailure.Message,
+                    compatibilityFailure,
+                    $"Documented mode-index validation: {primaryFailure.TechnicalDetails} " +
+                    $"Driver-compatible packed-index validation: {compatibilityFailure.TechnicalDetails}");
+            }
+        }
+
         return Task.CompletedTask;
     }
 

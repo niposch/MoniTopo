@@ -54,6 +54,8 @@ public sealed class DisplayActivationInteropTests
 
         Assert.Equal(87, exception.NativeErrorCode);
         Assert.Contains("native error 87", exception.TechnicalDetails, StringComparison.Ordinal);
+        Assert.Contains("paths=1; modes=1", exception.TechnicalDetails, StringComparison.Ordinal);
+        Assert.DoesNotContain("adapter", exception.TechnicalDetails, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -114,7 +116,7 @@ public sealed class DisplayActivationInteropTests
     }
 
     [Fact]
-    public void PlanUsesVirtualAwareIndexesWhenDriverOmitsCapabilityFlag()
+    public void PlanUsesDirectIndexesWhenPathDoesNotAdvertiseVirtualModeSupport()
     {
         var adapter = new NativeAdapterId(1, 0);
         var first = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0);
@@ -133,8 +135,72 @@ public sealed class DisplayActivationInteropTests
 
         Assert.Collection(
             plan.Paths,
-            path => AssertVirtualPath(path, sourceModeIndex: 0, targetModeIndex: 2, expectedFlags: 0x1),
-            path => AssertVirtualPath(path, sourceModeIndex: 1, targetModeIndex: 3, expectedFlags: 0x1));
+            path => AssertDirectPath(path, sourceModeIndex: 0, targetModeIndex: 2),
+            path => AssertDirectPath(path, sourceModeIndex: 1, targetModeIndex: 3));
+    }
+
+    [Fact]
+    public void PlanPrefersTheSourceAddressCapturedWithEachSourceGroup()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var first = Display("display-1", $"{adapter.StableKey}:S1", true, new DisplayPoint(0, 0), 0);
+        var second = Display("display-2", $"{adapter.StableKey}:S0", false, new DisplayPoint(2560, 0), 1);
+        var available = new NativeDisplaySnapshot(
+            [
+                AvailablePath(adapter, 0, 0, supportsVirtualMode: false, boostRefreshRate: false),
+                AvailablePath(adapter, 1, 0, supportsVirtualMode: false, boostRefreshRate: false),
+                AvailablePath(adapter, 0, 1, supportsVirtualMode: false, boostRefreshRate: false),
+                AvailablePath(adapter, 1, 1, supportsVirtualMode: false, boostRefreshRate: false),
+            ],
+            []);
+
+        var plan = DisplayConfigurationPlanBuilder.Build(
+            Profile([first, second]),
+            [
+                new ResolvedIdentityBinding(first.DisplayId, TargetKey(adapter, 0), 100),
+                new ResolvedIdentityBinding(second.DisplayId, TargetKey(adapter, 1), 100),
+            ],
+            available);
+
+        Assert.Collection(
+            plan.Paths,
+            path => Assert.Equal(1u, path.SourceInfo.Id),
+            path => Assert.Equal(0u, path.SourceInfo.Id));
+    }
+
+    [Fact]
+    public async Task ValidationRetriesPackedIndexesWhenDriverOmitsTheVirtualModeFlag()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var display = Display("display-1", $"{adapter.StableKey}:S0", true, new DisplayPoint(0, 0), 0);
+        var native = new FakeDisplayNative
+        {
+            Snapshot = AvailableConfiguration(adapter, supportsVirtualMode: false),
+        };
+        var mutationApi = new FakeMutationApi();
+        mutationApi.CoreResults.Enqueue(31);
+        mutationApi.CoreResults.Enqueue(0);
+        var backend = new GuardedDisplayActivationBackend(
+            new UnusedCaptureService(),
+            native,
+            new DisplayConfigMutationFacade(Authorization(), mutationApi),
+            new SupportedSessionGuard(),
+            Path.Combine(Path.GetTempPath(), "MoniTopo.Windows.Tests", Guid.NewGuid().ToString("N")),
+            TimeProvider.System);
+        var profile = Profile([display]);
+        var bindings = new[] { new ResolvedIdentityBinding(display.DisplayId, TargetKey(adapter, 0), 100) };
+
+        await backend.PreflightAsync(profile, bindings, CancellationToken.None);
+        await backend.ValidateCoreConfigurationAsync(profile, bindings, CancellationToken.None);
+        await backend.ApplyCoreTemporaryAsync(profile, bindings, CancellationToken.None);
+
+        Assert.Equal(3, mutationApi.CorePlans.Count);
+        Assert.Equal(0u, mutationApi.CorePlans[0].Paths[0].SourceInfo.ModeInfoIndex);
+        Assert.Equal(1u, mutationApi.CorePlans[0].Paths[0].TargetInfo.ModeInfoIndex);
+        Assert.Equal(0x0000FFFFu, mutationApi.CorePlans[1].Paths[0].SourceInfo.ModeInfoIndex);
+        Assert.Equal(0x0001FFFFu, mutationApi.CorePlans[1].Paths[0].TargetInfo.ModeInfoIndex);
+        Assert.Equal(0x0000FFFFu, mutationApi.CorePlans[2].Paths[0].SourceInfo.ModeInfoIndex);
+        Assert.Equal(0x0001FFFFu, mutationApi.CorePlans[2].Paths[0].TargetInfo.ModeInfoIndex);
     }
 
     [Fact]
@@ -339,6 +405,16 @@ public sealed class DisplayActivationInteropTests
         Assert.Equal(targetModeIndex, path.TargetInfo.TargetModeInfoIndex);
     }
 
+    private static void AssertDirectPath(
+        NativePathInfo path,
+        uint sourceModeIndex,
+        uint targetModeIndex)
+    {
+        Assert.Equal(0x1u, path.Flags);
+        Assert.Equal(sourceModeIndex, path.SourceInfo.ModeInfoIndex);
+        Assert.Equal(targetModeIndex, path.TargetInfo.ModeInfoIndex);
+    }
+
     private static DesiredDisplayPath Display(
         string displayId,
         string sourceGroup,
@@ -401,6 +477,10 @@ public sealed class DisplayActivationInteropTests
     {
         internal List<uint> CoreFlags { get; } = [];
 
+        internal List<NativeDisplaySnapshot> CorePlans { get; } = [];
+
+        internal Queue<int> CoreResults { get; } = [];
+
         internal (int Type, int RelativeScale) DpiPacket { get; private set; }
 
         internal (int Type, uint Value) ColorPacket { get; private set; }
@@ -414,7 +494,8 @@ public sealed class DisplayActivationInteropTests
         public int SetDisplayConfig(NativePathInfo[] paths, NativeModeInfo[] modes, uint flags)
         {
             CoreFlags.Add(flags);
-            return CoreResult;
+            CorePlans.Add(new NativeDisplaySnapshot([.. paths], [.. modes]));
+            return CoreResults.TryDequeue(out var result) ? result : CoreResult;
         }
 
         public int SetDpiScale(ref NativeDpiScaleSet packet)

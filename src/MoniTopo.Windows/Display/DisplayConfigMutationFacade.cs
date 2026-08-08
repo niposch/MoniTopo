@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using MoniTopo.Core.Activation;
 
 namespace MoniTopo.Windows.Display;
@@ -152,8 +153,69 @@ internal sealed class DisplayConfigMutationFacade
             "DisplayConfigSetDeviceInfo (Advanced Color)");
     }
 
-    private void SetCore(NativeDisplaySnapshot plan, uint flags, string errorCode, string message) =>
-        ThrowIfFailed(_api.SetDisplayConfig(plan.Paths, plan.Modes, flags), errorCode, message, "SetDisplayConfig");
+    private void SetCore(NativeDisplaySnapshot plan, uint flags, string errorCode, string message)
+    {
+        var nativeErrorCode = _api.SetDisplayConfig(plan.Paths, plan.Modes, flags);
+        if (nativeErrorCode != DisplayConfigNativeFacade.ErrorSuccess)
+        {
+            throw new DisplayActivationException(
+                errorCode,
+                message,
+                "SetDisplayConfig",
+                nativeErrorCode,
+                DescribePlan(plan, flags));
+        }
+    }
+
+    private static string DescribePlan(NativeDisplaySnapshot plan, uint flags)
+    {
+        var sourceOrdinals = new Dictionary<(NativeAdapterId AdapterId, uint SourceId), int>();
+        var builder = new StringBuilder();
+        builder.Append(CultureInfo.InvariantCulture, $"flags=0x{flags:X8}; paths={plan.Paths.Length}; modes={plan.Modes.Length}.");
+        for (var index = 0; index < plan.Paths.Length; index++)
+        {
+            var path = plan.Paths[index];
+            var sourceKey = (path.SourceInfo.AdapterId, path.SourceInfo.Id);
+            if (!sourceOrdinals.TryGetValue(sourceKey, out var sourceOrdinal))
+            {
+                sourceOrdinal = sourceOrdinals.Count;
+                sourceOrdinals.Add(sourceKey, sourceOrdinal);
+            }
+
+            builder.Append(CultureInfo.InvariantCulture,
+                $" Path[{index}]: source={sourceOrdinal}, sourceMode=0x{path.SourceInfo.ModeInfoIndex:X8}, " +
+                $"targetMode=0x{path.TargetInfo.ModeInfoIndex:X8}, pathFlags=0x{path.Flags:X8}, " +
+                $"rotation={path.TargetInfo.Rotation}, scaling={path.TargetInfo.Scaling}, " +
+                $"refresh={path.TargetInfo.RefreshRate.Numerator}/{path.TargetInfo.RefreshRate.Denominator}, " +
+                $"scanline={path.TargetInfo.ScanLineOrdering}, available={path.TargetInfo.TargetAvailable}.");
+        }
+
+        for (var index = 0; index < plan.Modes.Length; index++)
+        {
+            var mode = plan.Modes[index];
+            if (mode.InfoType == 1)
+            {
+                builder.Append(CultureInfo.InvariantCulture,
+                    $" Mode[{index}]: source {mode.Mode.SourceMode.Width}x{mode.Mode.SourceMode.Height} " +
+                    $"at {mode.Mode.SourceMode.Position.X},{mode.Mode.SourceMode.Position.Y}, pixelFormat={mode.Mode.SourceMode.PixelFormat}.");
+            }
+            else if (mode.InfoType == 2)
+            {
+                var signal = mode.Mode.TargetMode.TargetVideoSignalInfo;
+                builder.Append(CultureInfo.InvariantCulture,
+                    $" Mode[{index}]: target active={signal.ActiveSize.Width}x{signal.ActiveSize.Height}, " +
+                    $"total={signal.TotalSize.Width}x{signal.TotalSize.Height}, " +
+                    $"vSync={signal.VerticalSyncFrequency.Numerator}/{signal.VerticalSyncFrequency.Denominator}, " +
+                    $"scanline={signal.ScanLineOrdering}.");
+            }
+            else
+            {
+                builder.Append(CultureInfo.InvariantCulture, $" Mode[{index}]: type={mode.InfoType}.");
+            }
+        }
+
+        return builder.ToString();
+    }
 
     private static NativeDeviceInfoHeader CreateHeader(int type, int size, NativeAdapterId adapterId, uint id) => new()
     {
@@ -180,13 +242,14 @@ public sealed class DisplayActivationException(
     string errorCode,
     string message,
     string nativeOperation,
-    int nativeErrorCode)
+    int nativeErrorCode,
+    string? operationDetails = null)
     : ActivationFailureException(
         errorCode,
         message,
         technicalDetails: string.Create(
             CultureInfo.InvariantCulture,
-            $"{nativeOperation} failed with native error {nativeErrorCode} (0x{unchecked((uint)nativeErrorCode):X8})."))
+            $"{nativeOperation} failed with native error {nativeErrorCode} (0x{unchecked((uint)nativeErrorCode):X8}).{(string.IsNullOrWhiteSpace(operationDetails) ? string.Empty : $" {operationDetails}")}"))
 {
     public int NativeErrorCode { get; } = nativeErrorCode;
 }
