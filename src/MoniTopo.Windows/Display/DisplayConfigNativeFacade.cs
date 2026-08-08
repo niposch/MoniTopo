@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace MoniTopo.Windows.Display;
@@ -234,7 +235,24 @@ internal sealed class DisplayConfigNativeFacade : IDisplayConfigNativeFacade
         errorCode is ErrorNotSupported or ErrorInvalidParameter or ErrorCallNotImplemented;
 }
 
-public sealed class DisplayCaptureException(int nativeErrorCode, string message) : Exception(message)
+public sealed class DisplayCaptureException : Exception
 {
-    public int NativeErrorCode { get; } = nativeErrorCode;
+    public DisplayCaptureException(int nativeErrorCode, string message, string? technicalDetails = null)
+        : base(message)
+    {
+        NativeErrorCode = nativeErrorCode;
+        TechnicalDetails = technicalDetails ?? (nativeErrorCode == 0
+            ? null
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"Native error {nativeErrorCode} (0x{unchecked((uint)nativeErrorCode):X8})."));
+        if (!string.IsNullOrWhiteSpace(TechnicalDetails))
+        {
+            Data["MoniTopo.TechnicalDetails"] = TechnicalDetails;
+        }
+    }
+
+    public int NativeErrorCode { get; }
+
+    public string? TechnicalDetails { get; }
 }

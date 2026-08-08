@@ -13,8 +13,6 @@ public sealed class CcdCaptureService : IDisplayCaptureService
     private const uint QueryVirtualModeAware = 0x10;
     private const uint QueryVirtualRefreshRateAware = 0x40;
     private const uint ActivePath = 0x1;
-    private const uint SourceModeType = 1;
-    private const uint TargetModeType = 2;
     private readonly IDisplayConfigNativeFacade _native;
     private readonly IDisplayScaleService _scaleService;
     private readonly IMonitorIdentityProvider _identityProvider;
@@ -90,16 +88,14 @@ public sealed class CcdCaptureService : IDisplayCaptureService
         {
             var path = activeNativePaths[index];
             var sourceKey = SourceKey(path.SourceInfo.AdapterId, path.SourceInfo.Id);
-            var sourceModeIndex = checked((int)path.SourceModeInfoIndex);
-            if (sourceModeIndex < 0 || sourceModeIndex >= raw.Modes.Length || raw.Modes[sourceModeIndex].InfoType != SourceModeType)
+            if (!path.TryResolveSourceModeInfoIndex(raw.Modes, out var sourceModeIndex))
             {
-                throw new DisplayCaptureException(0, "Windows returned an incomplete source mode for an active display.");
+                throw IncompleteModeException("source", path, raw.Modes.Length);
             }
 
-            var targetModeIndex = checked((int)path.TargetModeInfoIndex);
-            if (targetModeIndex < 0 || targetModeIndex >= raw.Modes.Length || raw.Modes[targetModeIndex].InfoType != TargetModeType)
+            if (!path.TryResolveTargetModeInfoIndex(raw.Modes, out var targetModeIndex))
             {
-                throw new DisplayCaptureException(0, "Windows returned an incomplete target signal for an active display.");
+                throw IncompleteModeException("target", path, raw.Modes.Length);
             }
 
             var scale = _scaleService.Query(new DisplaySourceAddress(
@@ -200,4 +196,13 @@ public sealed class CcdCaptureService : IDisplayCaptureService
     private static string SourceKey(NativeAdapterId adapterId, uint sourceId) => $"{adapterId.StableKey}:S{sourceId}";
 
     private static string TargetKey(NativeAdapterId adapterId, uint targetId) => $"{adapterId.StableKey}:T{targetId}";
+
+    private static DisplayCaptureException IncompleteModeException(
+        string kind,
+        NativePathInfo path,
+        int modeCount) => new(
+            0,
+            $"Windows returned an incomplete {kind} mode for an active display.",
+            $"Path flags=0x{path.Flags:X8}; source mode index=0x{path.SourceInfo.ModeInfoIndex:X8}; " +
+            $"target mode index=0x{path.TargetInfo.ModeInfoIndex:X8}; mode count={modeCount}.");
 }

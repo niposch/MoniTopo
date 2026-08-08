@@ -419,8 +419,14 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
 
     private static string CreatePathSignature(NativePathInfo path, NativeModeInfo[] modes)
     {
-        var source = ModeAt(modes, path.SourceModeInfoIndex, 1).Mode.SourceMode;
-        var target = ModeAt(modes, path.TargetModeInfoIndex, 2).Mode.TargetMode.TargetVideoSignalInfo;
+        if (!path.TryResolveSourceModeInfoIndex(modes, out var sourceModeIndex) ||
+            !path.TryResolveTargetModeInfoIndex(modes, out var targetModeIndex))
+        {
+            throw new InvalidDataException("Windows returned an incomplete active display mode during rollback verification.");
+        }
+
+        var source = modes[sourceModeIndex].Mode.SourceMode;
+        var target = modes[targetModeIndex].Mode.TargetMode.TargetVideoSignalInfo;
         return $"{TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)};" +
             $"{path.SourceInfo.AdapterId.StableKey}:{path.SourceInfo.Id}:{path.SourceInfo.CloneGroupId};" +
             $"{source.Width}x{source.Height}@{source.Position.X},{source.Position.Y};" +
@@ -428,16 +434,6 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             $"{path.TargetInfo.RefreshRate.Numerator}/{path.TargetInfo.RefreshRate.Denominator};" +
             $"{target.PixelRate}:{target.ActiveSize.Width}x{target.ActiveSize.Height}:" +
             $"{target.TotalSize.Width}x{target.TotalSize.Height}:{target.ScanLineOrdering}";
-    }
-
-    private static NativeModeInfo ModeAt(NativeModeInfo[] modes, uint index, uint expectedType)
-    {
-        if (index >= modes.Length || modes[index].InfoType != expectedType)
-        {
-            throw new InvalidDataException("Windows returned an incomplete active display mode during rollback verification.");
-        }
-
-        return modes[index];
     }
 
     private static string TargetKey(NativeAdapterId adapterId, uint targetId) => $"{adapterId.StableKey}:T{targetId}";

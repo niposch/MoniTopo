@@ -123,13 +123,63 @@ internal struct NativePathInfo
     internal readonly bool SupportsVirtualMode =>
         (Flags & NativeDisplayConfigPathFlags.SupportVirtualMode) != 0;
 
-    internal readonly uint SourceModeInfoIndex => SupportsVirtualMode
-        ? SourceInfo.SourceModeInfoIndex
-        : SourceInfo.ModeInfoIndex;
+    internal readonly bool TryResolveSourceModeInfoIndex(NativeModeInfo[] modes, out uint index) =>
+        TryResolveModeInfoIndex(
+            modes,
+            SourceInfo.ModeInfoIndex,
+            SourceInfo.SourceModeInfoIndex,
+            expectedType: 1,
+            SourceInfo.AdapterId,
+            SourceInfo.Id,
+            out index);
 
-    internal readonly uint TargetModeInfoIndex => SupportsVirtualMode
-        ? TargetInfo.TargetModeInfoIndex
-        : TargetInfo.ModeInfoIndex;
+    internal readonly bool TryResolveTargetModeInfoIndex(NativeModeInfo[] modes, out uint index) =>
+        TryResolveModeInfoIndex(
+            modes,
+            TargetInfo.ModeInfoIndex,
+            TargetInfo.TargetModeInfoIndex,
+            expectedType: 2,
+            TargetInfo.AdapterId,
+            TargetInfo.Id,
+            out index);
+
+    private readonly bool TryResolveModeInfoIndex(
+        NativeModeInfo[] modes,
+        uint directIndex,
+        uint virtualIndex,
+        uint expectedType,
+        NativeAdapterId adapterId,
+        uint id,
+        out uint index)
+    {
+        var first = SupportsVirtualMode ? virtualIndex : directIndex;
+        var second = SupportsVirtualMode ? directIndex : virtualIndex;
+        if (MatchesMode(modes, first, expectedType, adapterId, id))
+        {
+            index = first;
+            return true;
+        }
+
+        if (second != first && MatchesMode(modes, second, expectedType, adapterId, id))
+        {
+            index = second;
+            return true;
+        }
+
+        index = uint.MaxValue;
+        return false;
+    }
+
+    private static bool MatchesMode(
+        NativeModeInfo[] modes,
+        uint index,
+        uint expectedType,
+        NativeAdapterId adapterId,
+        uint id) =>
+        index < modes.Length &&
+        modes[index].InfoType == expectedType &&
+        modes[index].AdapterId == adapterId &&
+        modes[index].Id == id;
 }
 
 [StructLayout(LayoutKind.Sequential)]

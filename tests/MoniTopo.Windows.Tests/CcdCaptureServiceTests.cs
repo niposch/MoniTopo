@@ -210,6 +210,6 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
                 RefreshRate = new NativeRational(60, 1),
                 TargetAvailable = 1,
             },
-            Flags = (active ? 1u : 0u) | 0x8u,
+            Flags = active ? 1u : 0u,
         };
 }

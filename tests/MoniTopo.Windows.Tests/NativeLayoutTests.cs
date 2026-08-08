@@ -46,23 +46,42 @@ public sealed class NativeLayoutTests
     }
 
     [Fact]
-    public void PathModeIndexesFollowTheVirtualModeSupportFlag()
+    public void PathModeIndexesResolveDirectAndPackedDriverRepresentations()
     {
+        var adapter = new NativeAdapterId(1, 0);
+        var modes = new[]
+        {
+            new NativeModeInfo { InfoType = 2, AdapterId = adapter, Id = 2 },
+            new NativeModeInfo { InfoType = 1, AdapterId = adapter, Id = 1 },
+        };
         var direct = new NativePathInfo
         {
-            SourceInfo = new NativePathSourceInfo { ModeInfoIndex = 2 },
-            TargetInfo = new NativePathTargetInfo { ModeInfoIndex = 5 },
+            SourceInfo = new NativePathSourceInfo { AdapterId = adapter, Id = 1, ModeInfoIndex = 1 },
+            TargetInfo = new NativePathTargetInfo { AdapterId = adapter, Id = 2, ModeInfoIndex = 0 },
         };
-        var virtualPath = new NativePathInfo
+        var packedWithoutCapabilityFlag = new NativePathInfo
         {
-            SourceInfo = new NativePathSourceInfo { ModeInfoIndex = (2u << 16) | 0xFFFFu },
-            TargetInfo = new NativePathTargetInfo { ModeInfoIndex = (5u << 16) | 0xFFFFu },
-            Flags = 0x8,
+            SourceInfo = new NativePathSourceInfo
+            {
+                AdapterId = adapter,
+                Id = 1,
+                ModeInfoIndex = (1u << 16) | 0xFFFFu,
+            },
+            TargetInfo = new NativePathTargetInfo
+            {
+                AdapterId = adapter,
+                Id = 2,
+                ModeInfoIndex = 0x0000FFFFu,
+            },
         };
 
-        Assert.Equal(2u, direct.SourceModeInfoIndex);
-        Assert.Equal(5u, direct.TargetModeInfoIndex);
-        Assert.Equal(2u, virtualPath.SourceModeInfoIndex);
-        Assert.Equal(5u, virtualPath.TargetModeInfoIndex);
+        Assert.True(direct.TryResolveSourceModeInfoIndex(modes, out var directSource));
+        Assert.True(direct.TryResolveTargetModeInfoIndex(modes, out var directTarget));
+        Assert.True(packedWithoutCapabilityFlag.TryResolveSourceModeInfoIndex(modes, out var packedSource));
+        Assert.True(packedWithoutCapabilityFlag.TryResolveTargetModeInfoIndex(modes, out var packedTarget));
+        Assert.Equal(1u, directSource);
+        Assert.Equal(0u, directTarget);
+        Assert.Equal(1u, packedSource);
+        Assert.Equal(0u, packedTarget);
     }
 }

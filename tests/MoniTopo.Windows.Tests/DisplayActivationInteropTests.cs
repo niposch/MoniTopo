@@ -114,7 +114,7 @@ public sealed class DisplayActivationInteropTests
     }
 
     [Fact]
-    public void PlanUsesDirectModeIndexesForLegacyPaths()
+    public void PlanUsesVirtualAwareIndexesWhenDriverOmitsCapabilityFlag()
     {
         var adapter = new NativeAdapterId(1, 0);
         var first = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0);
@@ -133,8 +133,8 @@ public sealed class DisplayActivationInteropTests
 
         Assert.Collection(
             plan.Paths,
-            path => AssertDirectPath(path, sourceModeIndex: 0, targetModeIndex: 2),
-            path => AssertDirectPath(path, sourceModeIndex: 1, targetModeIndex: 3));
+            path => AssertVirtualPath(path, sourceModeIndex: 0, targetModeIndex: 2, expectedFlags: 0x1),
+            path => AssertVirtualPath(path, sourceModeIndex: 1, targetModeIndex: 3, expectedFlags: 0x1));
     }
 
     [Fact]
@@ -326,20 +326,17 @@ public sealed class DisplayActivationInteropTests
             Flags = (supportsVirtualMode ? 0x8u : 0u) | (boostRefreshRate ? 0x10u : 0u),
         };
 
-    private static void AssertVirtualPath(NativePathInfo path, uint sourceModeIndex, uint targetModeIndex)
+    private static void AssertVirtualPath(
+        NativePathInfo path,
+        uint sourceModeIndex,
+        uint targetModeIndex,
+        uint expectedFlags = 0x9)
     {
-        Assert.Equal(0x9u, path.Flags);
+        Assert.Equal(expectedFlags, path.Flags);
         Assert.Equal(0xFFFFu, path.SourceInfo.CloneGroupId);
         Assert.Equal(sourceModeIndex, path.SourceInfo.SourceModeInfoIndex);
         Assert.Equal(0xFFFFu, path.TargetInfo.DesktopModeInfoIndex);
         Assert.Equal(targetModeIndex, path.TargetInfo.TargetModeInfoIndex);
-    }
-
-    private static void AssertDirectPath(NativePathInfo path, uint sourceModeIndex, uint targetModeIndex)
-    {
-        Assert.Equal(0x1u, path.Flags);
-        Assert.Equal(sourceModeIndex, path.SourceInfo.ModeInfoIndex);
-        Assert.Equal(targetModeIndex, path.TargetInfo.ModeInfoIndex);
     }
 
     private static DesiredDisplayPath Display(

@@ -100,7 +100,6 @@ internal static class DisplayConfigurationPlanBuilder
                 },
             });
 
-            var supportsVirtualMode = availablePath.SupportsVirtualMode;
             var sourceModeIndex = sourceModeIndexes[display.SourceGroupId];
             paths.Add(new NativePathInfo
             {
@@ -108,17 +107,13 @@ internal static class DisplayConfigurationPlanBuilder
                 {
                     AdapterId = source.AdapterId,
                     Id = source.Id,
-                    ModeInfoIndex = supportsVirtualMode
-                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(sourceModeIndex)
-                        : sourceModeIndex,
+                    ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(sourceModeIndex),
                 },
                 TargetInfo = new NativePathTargetInfo
                 {
                     AdapterId = availablePath.TargetInfo.AdapterId,
                     Id = availablePath.TargetInfo.Id,
-                    ModeInfoIndex = supportsVirtualMode
-                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex)
-                        : targetModeIndex,
+                    ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex),
                     OutputTechnology = availablePath.TargetInfo.OutputTechnology,
                     Rotation = ToNative(display.Orientation),
                     Scaling = ToNative(display.PathScaling),

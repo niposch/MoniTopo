@@ -25,6 +25,7 @@ public sealed class DisplayConfigQueryTests
 
         Assert.Equal(5, exception.NativeErrorCode);
         Assert.DoesNotContain("5", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Native error 5", exception.TechnicalDetails, StringComparison.Ordinal);
     }
 
     [Fact]
