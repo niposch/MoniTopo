@@ -231,31 +231,31 @@ public sealed class ProfileActivationService(
             backend.SetMutationGuard(() => recoverySession.EnsureOwnershipAsync(CancellationToken.None).GetAwaiter().GetResult());
             await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
-            // A layout may have changed while the rollback companion was starting.
-            // Re-plan under writer ownership and validate fresh routing before applying.
-            plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
-            var coreApplied = false;
-            if (plan.CoreConfigurationRequired)
-            {
-                await backend.ValidateCoreConfigurationAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
-                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-                Report(progress, ActivationPhase.ApplyingTopology, "Applying display layout and mode changes…");
-                mutationBegan = true;
-                await backend.ApplyCoreTemporaryAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
-                coreApplied = true;
-                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-                Report(progress, ActivationPhase.WaitingForDisplays, "Waiting for displays to settle…");
-                await backend.WaitForStableTopologyAsync(cancellationToken).ConfigureAwait(false);
-                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            // Mode switches can reset DPI/HDR; HDR can in turn reset DPI. Recheck
-            // properties between phases, with a bounded number of repair passes.
-            // Native setters also re-read per-source/target state just before writing.
+            var coreNeedsPersistence = false;
+            // Re-plan under writer ownership, including core changes on every pass:
+            // HDR can restore a previous Windows mode as well as resetting DPI.
+            // Revalidate fresh routing before each necessary core repair. Conflicting
+            // driver side effects remain bounded and require exact final verification.
             for (var pass = 0; pass < 3; pass++)
             {
                 plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
-                if (!plan.ScalingRequired && !plan.HdrRequired) break;
+                if (!plan.HasChanges && !coreNeedsPersistence) break;
+                if (plan.CoreConfigurationRequired)
+                {
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    await backend.ValidateCoreConfigurationAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    Report(progress, ActivationPhase.ApplyingTopology, "Applying display layout and mode changes…");
+                    mutationBegan = true;
+                    await backend.ApplyCoreTemporaryAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                    coreNeedsPersistence = true;
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    Report(progress, ActivationPhase.WaitingForDisplays, "Waiting for displays to settle…");
+                    await backend.WaitForStableTopologyAsync(cancellationToken).ConfigureAwait(false);
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
                 if (plan.ScalingRequired)
                 {
                     await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
@@ -276,19 +276,29 @@ public sealed class ProfileActivationService(
                     await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
                     await WaitForPropertyAsync(profile, scaling: false, cancellationToken).ConfigureAwait(false);
                 }
+
+                plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
+                if (!plan.HasChanges)
+                {
+                    if (!coreNeedsPersistence) break;
+                    Report(progress, ActivationPhase.Verifying, "Verifying the complete display setup…");
+                    await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    Report(progress, ActivationPhase.Persisting, "Saving the verified layout and modes in Windows…");
+                    await backend.PersistCoreConfigurationAsync(cancellationToken).ConfigureAwait(false);
+                    coreNeedsPersistence = false;
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    // SDC_APPLY | SDC_SAVE_TO_DATABASE can itself reset DPI/HDR.
+                    // Reconcile those side effects under the same writer lease.
+                }
             }
 
             Report(progress, ActivationPhase.Verifying, "Verifying the complete display setup…");
             await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
             await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
-            if (coreApplied)
-            {
-                Report(progress, ActivationPhase.Persisting, "Saving the verified layout and modes in Windows…");
-                await backend.PersistCoreConfigurationAsync(cancellationToken).ConfigureAwait(false);
-                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-                await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
-            }
+            if (coreNeedsPersistence)
+                throw new ActivationFailureException("activation.verification.failed", "Windows did not apply every saved display setting.");
             await stateStore.SetLastActivatedProfileAsync(profile.Id, cancellationToken).ConfigureAwait(false);
             await recoverySession.CompleteAsync(RecoveryTerminalOutcome.ActivationSucceeded, cancellationToken).ConfigureAwait(false);
 

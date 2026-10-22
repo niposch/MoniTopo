@@ -61,6 +61,8 @@ public sealed class DisplayBackendConvergenceTests
         {
             QueryHandler = _ => api.DpiSources.Count == 0 ? initial : changed,
             HdrState = new NativeHdrState(true, false, false),
+            DpiHandler = source => (0, new NativeDpiScaleGet
+            { CurrentRelativeScale = api.DpiSources.Contains(source) ? 0 : 1, MaximumRelativeScale = 1 }),
         };
         api.BeforePersist = () =>
         {
@@ -72,6 +74,50 @@ public sealed class DisplayBackendConvergenceTests
             var restored = await GuardedDisplayActivationBackend.RestoreSnapshotAsync(path, query, Facade(api), CancellationToken.None);
             Assert.True(restored);
             Assert.Equal(1, api.PersistCount);
+        });
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RollbackRepairsHdrModeResetAndPersistenceScaleReset(bool resetCoreOnHdr, bool resetScaleOnPersist)
+    {
+        var original = ActiveSnapshot();
+        var wrong = new NativeDisplaySnapshot(original.Paths.ToArray(), original.Modes.ToArray());
+        wrong.Modes[0].Mode.SourceMode.Width--;
+        var current = wrong;
+        var hdr = true;
+        var scales = new Dictionary<uint, int> { [0] = 1, [1] = 0 };
+        var api = new RecordingMutation
+        {
+            OnTemporaryApply = snapshot => current = snapshot,
+            OnHdr = (_, enabled) => { hdr = enabled; if (resetCoreOnHdr) current = wrong; },
+            OnDpi = (source, scale) => scales[source] = scale,
+            BeforePersist = () =>
+            {
+                Assert.False(hdr);
+                Assert.Equal(0, scales[0]);
+                Assert.Equal(2560u, current.Modes[0].Mode.SourceMode.Width);
+                if (resetScaleOnPersist) scales[0] = 1;
+            },
+        };
+        var query = new FakeDisplayNative
+        {
+            QueryHandler = _ => current,
+            HdrHandler = (_, target) => new NativeHdrState(true, target == 0 && hdr, false),
+            DpiHandler = source => (0, new NativeDpiScaleGet { CurrentRelativeScale = scales[source], MaximumRelativeScale = 1 }),
+        };
+        await InRollback(original, async path =>
+        {
+            Assert.True(await GuardedDisplayActivationBackend.RestoreSnapshotAsync(path, query, Facade(api), CancellationToken.None));
+            Assert.Equal(resetCoreOnHdr ? 2 : 1, api.TemporaryApplyCount);
+            Assert.Equal(1, api.PersistCount);
+            Assert.Equal(new uint[] { 0 }, api.HdrTargets);
+            Assert.Equal(resetScaleOnPersist ? 2 : 1, api.DpiSources.Count);
+            Assert.Equal(0, scales[0]);
+            Assert.False(hdr);
+            Assert.Equal(0, api.FallbackCount);
         });
     }
 
@@ -95,6 +141,30 @@ public sealed class DisplayBackendConvergenceTests
             Assert.True(result.EmergencyFallbackUsed);
             Assert.Equal(1, api.FallbackCount);
             Assert.Equal(0, api.PersistCount);
+        });
+    }
+
+    [Fact]
+    public async Task RollbackPollsPendingScaleInsteadOfRepeatingItsSetter()
+    {
+        var raw = ActiveSnapshot();
+        var api = new RecordingMutation();
+        var remainingLag = 2;
+        var query = new FakeDisplayNative
+        {
+            Snapshot = raw,
+            HdrState = new NativeHdrState(true, false, false),
+            DpiHandler = source => (0, new NativeDpiScaleGet
+            {
+                CurrentRelativeScale = source == 0 && (api.DpiSources.Count == 0 || remainingLag-- > 0) ? 1 : 0,
+                MaximumRelativeScale = 1,
+            }),
+        };
+        await InRollback(raw, async path =>
+        {
+            Assert.True(await GuardedDisplayActivationBackend.RestoreSnapshotAsync(path, query, Facade(api), CancellationToken.None));
+            Assert.Equal(new uint[] { 0 }, api.DpiSources);
+            Assert.Equal(1, api.PersistCount);
         });
     }
 
@@ -310,17 +380,23 @@ public sealed class DisplayBackendConvergenceTests
         internal int ValidationCount { get; private set; }
         internal bool RejectFirstValidation { get; init; }
         internal Action? BeforePersist { get; set; }
+        internal Action<NativeDisplaySnapshot>? OnTemporaryApply { get; init; }
+        internal Action<uint, int>? OnDpi { get; init; }
+        internal Action<uint, bool>? OnHdr { get; init; }
+        internal int TemporaryApplyCount { get; private set; }
         public int SetDisplayConfig(NativePathInfo[] paths, NativeModeInfo[] modes, uint flags)
         {
             Assert.Equal(0u, flags & 0x400u);
             if ((flags & SetDisplayConfigFlags.TopologyExtend) != 0) FallbackCount++;
             if ((flags & SetDisplayConfigFlags.Validate) != 0 && ++ValidationCount == 1 && RejectFirstValidation) return 31;
             if ((flags & SetDisplayConfigFlags.Apply) != 0) AppliedSources = paths.Select(path => path.SourceInfo.Id).ToArray();
+            if ((flags & SetDisplayConfigFlags.Apply) != 0 && (flags & SetDisplayConfigFlags.SaveToDatabase) == 0)
+            { TemporaryApplyCount++; OnTemporaryApply?.Invoke(new NativeDisplaySnapshot(paths, modes)); }
             if ((flags & SetDisplayConfigFlags.SaveToDatabase) != 0) { BeforePersist?.Invoke(); PersistCount++; }
             return 0;
         }
-        public int SetDpiScale(ref NativeDpiScaleSet packet) { DpiSources.Add(packet.Header.Id); return 0; }
-        public int SetHdrState(ref NativeHdrStateSet packet) { HdrTargets.Add(packet.Header.Id); return 0; }
+        public int SetDpiScale(ref NativeDpiScaleSet packet) { DpiSources.Add(packet.Header.Id); OnDpi?.Invoke(packet.Header.Id, packet.RelativeScale); return 0; }
+        public int SetHdrState(ref NativeHdrStateSet packet) { HdrTargets.Add(packet.Header.Id); OnHdr?.Invoke(packet.Header.Id, packet.Value != 0); return 0; }
         public int SetAdvancedColorState(ref NativeAdvancedColorStateSet packet) => throw new InvalidOperationException("Unexpected legacy setter.");
     }
 }

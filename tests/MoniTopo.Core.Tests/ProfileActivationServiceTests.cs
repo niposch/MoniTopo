@@ -111,6 +111,109 @@ public sealed class ProfileActivationServiceTests
         Assert.DoesNotContain("persist", backend.Calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HdrRestoringPreviousModeRevalidatesAndRepairsCoreBeforePersistence(bool coreInitiallyChanged)
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with
+            { RefreshRate = coreInitiallyChanged ? new RefreshRate(75, 1) : path.RefreshRate, HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            ResetScaleOnHdr = true,
+        };
+        var recovery = new FakeRecoveryCoordinator();
+
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(coreInitiallyChanged ? 2 : 1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(coreInitiallyChanged ? 3 : 1, backend.Calls.Count(call => call == "validate"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "hdr"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "persist"));
+        Assert.True(backend.Calls.IndexOf("hdr") < backend.Calls.LastIndexOf("apply-core"));
+        Assert.True(backend.Calls.LastIndexOf("apply-core") < backend.Calls.IndexOf("persist"));
+        Assert.True(recovery.Session.SuccessSignaled);
+    }
+
+    [Fact]
+    public async Task ScaleRestoringPreviousModeRepairsOnlyCoreAfterScaleConverges()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { WindowsUiScalePercent = 100 }), ResetCoreOnScale = true };
+
+        var result = await CreateService(backend).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.True(backend.Calls.IndexOf("scale") < backend.Calls.IndexOf("validate"));
+        Assert.DoesNotContain("hdr", backend.Calls);
+        Assert.Contains("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task CoreRepairValidationFailureAfterHdrStillRollsBack()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            FailingCall = "validate",
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.MutationBegan);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal("activation.validate", result.ErrorCode);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task RepeatedCoreAndHdrConflictIsBoundedAndRollsBackWithoutPersistence()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            ResetPropertiesDuringCore = true,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal(2, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(3, backend.Calls.Count(call => call == "hdr"));
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PersistenceResettingPropertiesRepairsWithoutRedundantCoreWrite(bool hdr)
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { RefreshRate = new RefreshRate(75, 1) }),
+            ResetScaleOnPersist = true,
+            ResetHdrOnPersist = hdr,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "persist"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(hdr ? 1 : 0, backend.Calls.Count(call => call == "hdr"));
+        Assert.True(backend.Calls.IndexOf("persist") < backend.Calls.IndexOf("scale"));
+    }
+
     [Fact]
     public async Task FreshPlanCatchesLayoutChangeBeforeTheFirstPropertyWrite()
     {
@@ -558,6 +661,10 @@ public sealed class ProfileActivationServiceTests
         internal bool IgnoreScalingWrites { get; init; }
         internal bool ResetScaleOnHdr { get; init; }
         internal bool ResetHdrOnScale { get; init; }
+        internal bool ResetCoreOnHdr { get; init; }
+        internal bool ResetCoreOnScale { get; init; }
+        internal bool ResetScaleOnPersist { get; init; }
+        internal bool ResetHdrOnPersist { get; init; }
         internal Action? OnHdr { get; init; }
         internal bool RestorePropertiesDuringCore { get; init; }
         internal bool ResetPropertiesDuringCore { get; init; }
@@ -646,6 +753,7 @@ public sealed class ProfileActivationServiceTests
             {
                 WindowsUiScalePercent = profile.Displays.Single(display => display.DisplayId == path.DisplayId).WindowsUiScalePercent,
                 HdrEnabled = ResetHdrOnScale || path.HdrEnabled,
+                RefreshRate = ResetCoreOnScale ? new RefreshRate(75, 1) : path.RefreshRate,
             });
         }
 
@@ -656,11 +764,20 @@ public sealed class ProfileActivationServiceTests
             {
                 HdrEnabled = profile.Displays.Single(display => display.DisplayId == path.DisplayId).HdrEnabled,
                 WindowsUiScalePercent = ResetScaleOnHdr ? 100 : path.WindowsUiScalePercent,
+                RefreshRate = ResetCoreOnHdr ? new RefreshRate(75, 1) : path.RefreshRate,
             });
             OnHdr?.Invoke();
         }
 
-        public Task PersistCoreConfigurationAsync(CancellationToken cancellationToken) => Invoke("persist");
+        public async Task PersistCoreConfigurationAsync(CancellationToken cancellationToken)
+        {
+            await Invoke("persist");
+            _current = WithPaths(_current!, path => path with
+            {
+                WindowsUiScalePercent = ResetScaleOnPersist ? 100 : path.WindowsUiScalePercent,
+                HdrEnabled = ResetHdrOnPersist || path.HdrEnabled,
+            });
+        }
 
         public Task<bool> RollbackAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken)
         {

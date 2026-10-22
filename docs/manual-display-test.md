@@ -4,6 +4,8 @@ Run this checklist manually on the build being evaluated, with a keyboard path a
 
 Local validation on 22 October 2026 completed two round trips between the existing one- and two-display profiles and one deliberate pre-HDR failure with exact rollback. The original captured setup was verified after each run. This does not certify other monitors, docks, clones, DRR, mixed-DPI placement, or the installed update flow; the remaining checklist still applies.
 
+Additional explicit manual qualification on the same date exercised persisted editor settings: no-op, HDR on/off, refresh reduction, resolution reduction with edge preservation, scale on each of two monitors, fractional refresh selection, and combined mode/scale/HDR changes. It reproduced HDR restoring the earlier mode and Windows core persistence resetting DPI; bounded reconciliation fixes were then retested successfully, including an injected post-persistence failure with exact rollback. The fresh original setup was restored and verified after each scenario, with strict fractional-rate restoration. Automated tests remain fake-only. These checks used the production editor model and activation/recovery services through a separate manual executable, not UI click automation or an installed-update test.
+
 ## Preparation
 
 - Record the current Windows display arrangement in screenshots or notes.
@@ -24,7 +26,7 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - After a switch, use another profile hotkey without restarting MoniTopo; it must still work.
 - If existing profiles predate complete virtual-mode capture, update each from its intended Windows setup before evaluating virtual desktop-image or dynamic-refresh restoration.
 
-## Profile setting edits (development editor)
+## Profile setting edits
 
 - Open **Edit display settings** for a connected active display. Compare available resolution/rate pairs, Windows scale steps, and HDR choices against Windows Settings. Verify fractional rates remain distinct where reported.
 - Change a resolution and confirm its refresh-rate list updates. Save and confirm the desktop has not changed; then explicitly activate and verify the requested source resolution, refresh, scale, HDR, and primary display.
@@ -34,7 +36,7 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - Change the connected setup while an editor is open. A stale capability or changed profile must be rejected on Save; no display changes may happen during this check.
 - Activation failure must use the existing validated rollback/recovery path. Do not deliberately choose a destructive configuration or automate real writes to test the editor.
 
-## Change-aware activation (development branch)
+## Change-aware activation
 
 - Activate an already-matching profile from the tray and a hotkey. Confirm it reports already active without a display reset or flicker.
 - Use two otherwise identical profiles differing only in HDR. Leave the pointer on the other monitor and switch both ways; record whether it stays in place. HDR may still cause a driver/display transition, so this requires hardware validation.
