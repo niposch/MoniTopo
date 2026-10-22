@@ -16,6 +16,7 @@ using MoniTopo.Windows.Startup;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class MainWindowInitializationTests
 {
     [Theory]

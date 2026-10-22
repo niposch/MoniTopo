@@ -6,6 +6,7 @@ using MoniTopo.Windows.Input;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class ActivationInteractionControllerTests
 {
     [Fact]

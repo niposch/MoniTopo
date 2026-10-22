@@ -6,6 +6,7 @@ using System.Windows.Data;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class MainWindowBindingTests
 {
     [Fact]

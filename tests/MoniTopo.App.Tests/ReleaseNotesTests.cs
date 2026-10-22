@@ -9,6 +9,7 @@ using MoniTopo.Core.Updates;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class ReleaseNotesTests
 {
     [Theory]

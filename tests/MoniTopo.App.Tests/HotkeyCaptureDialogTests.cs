@@ -7,6 +7,7 @@ using Button = System.Windows.Controls.Button;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class HotkeyCaptureDialogTests
 {
     [Theory]

@@ -13,6 +13,7 @@ using MoniTopo.Windows.Display;
 
 namespace MoniTopo.App.Tests;
 
+[Collection(WpfUiTestCollectionDefinition.Name)]
 public sealed class DisplaySettingsEditorTests
 {
     [Fact]
