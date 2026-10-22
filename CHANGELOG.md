@@ -6,6 +6,7 @@
 - Filter refresh rates by resolution, preserve fractional rates, recheck available options before saving, and keep unavailable values intact.
 - Preserve connected monitor edges after resolution edits, reject conflicting arrangements, and use Windows timing selection without relaxing exact requested settings or recovery.
 - Keep cloned source mode/scale changes capture-based; supported per-target HDR remains editable.
+- Change only the display-setting categories that differ: skip unchanged topology/modes, scale, and HDR, and avoid all display writes for already-active profiles. Recheck properties after transitions and retain complete verification and rollback.
 
 ## 2026.10.22 — first release
 

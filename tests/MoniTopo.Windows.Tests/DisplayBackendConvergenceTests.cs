@@ -13,10 +13,14 @@ public sealed class DisplayBackendConvergenceTests
         var initial = ActiveSnapshot();
         var changed = ReassignSecondSource(initial);
         var api = new RecordingMutation();
-        var query = new FakeDisplayNative { QueryHandler = _ => api.DpiSources.Count == 0 ? initial : changed };
+        var query = new FakeDisplayNative
+        {
+            QueryHandler = _ => api.DpiSources.Count == 0 ? initial : changed,
+            DpiPacket = new NativeDpiScaleGet { MaximumRelativeScale = 1 },
+        };
         var capture = new SnapshotCapture(() => api.DpiSources.Count == 0 ? initial : changed);
         var backend = Backend(capture, query, api);
-        var profile = Profile(initial);
+        var profile = Profile(initial) with { Displays = Profile(initial).Displays.Select(path => path with { WindowsUiScalePercent = 125 }).ToArray() };
 
         await backend.ApplyScalingAsync(profile, [], CancellationToken.None);
 
@@ -141,13 +145,91 @@ public sealed class DisplayBackendConvergenceTests
         var profile = Profile(initial);
         var bindings = initial.Paths.Select((path, index) => new ResolvedIdentityBinding(profile.Displays[index].DisplayId, TargetKey(path), 100)).ToArray();
         await backend.PreflightAsync(profile, bindings, CancellationToken.None);
+        await backend.ValidateCoreConfigurationAsync(profile, bindings, CancellationToken.None);
         current = changed;
 
         await backend.PersistCoreConfigurationAsync(CancellationToken.None);
 
         Assert.Equal(new uint[] { 0, 7 }, api.AppliedSources);
-        Assert.Equal(1, api.ValidationCount);
+        Assert.Equal(2, api.ValidationCount);
         Assert.Equal(1, api.PersistCount);
+    }
+
+    [Fact]
+    public async Task UnchangedScaleDoesNotInvokeAnySetter()
+    {
+        var raw = ActiveSnapshot();
+        var api = new RecordingMutation();
+        var backend = Backend(new SnapshotCapture(() => raw), new FakeDisplayNative { Snapshot = raw }, api);
+        await backend.ApplyScalingAsync(Profile(raw), [], CancellationToken.None);
+        Assert.Empty(api.DpiSources);
+        Assert.Empty(api.AppliedSources);
+        Assert.Empty(api.HdrTargets);
+    }
+
+    [Fact]
+    public async Task MixedScaleChangesWriteOnlyTheSourceWhoseLiveValueDiffers()
+    {
+        var raw = ActiveSnapshot();
+        var api = new RecordingMutation();
+        var native = new FakeDisplayNative
+        {
+            Snapshot = raw,
+            DpiHandler = source => (0, new NativeDpiScaleGet { CurrentRelativeScale = source == 0 ? 0 : 1, MaximumRelativeScale = 2 }),
+        };
+        var backend = Backend(new SnapshotCapture(() => raw), native, api);
+        var profile = Profile(raw) with { Displays = Profile(raw).Displays.Select(path => path with { WindowsUiScalePercent = 125 }).ToArray() };
+        await backend.ApplyScalingAsync(profile, [], CancellationToken.None);
+        Assert.Equal(new uint[] { 0 }, api.DpiSources);
+        Assert.Empty(api.AppliedSources);
+    }
+
+    [Fact]
+    public async Task SharedCloneSourceReceivesOnlyOneScaleWrite()
+    {
+        var raw = ActiveSnapshot();
+        raw.Paths[1].SourceInfo = raw.Paths[0].SourceInfo;
+        var api = new RecordingMutation();
+        var native = new FakeDisplayNative { Snapshot = raw, DpiPacket = new NativeDpiScaleGet { MaximumRelativeScale = 2 } };
+        var backend = Backend(new SnapshotCapture(() => raw), native, api);
+        var profile = Profile(raw) with
+        {
+            Displays = Profile(raw).Displays.Select(path => path with
+            { WindowsUiScalePercent = 125, Position = new DisplayPoint(0, 0), SourceGroupId = "shared" }).ToArray()
+        };
+        await backend.ApplyScalingAsync(profile, [], CancellationToken.None);
+        Assert.Equal(new uint[] { 0 }, api.DpiSources);
+    }
+
+    [Fact]
+    public async Task MixedHdrChangesWriteOnlyTheTargetWhoseLiveValueDiffers()
+    {
+        var raw = ActiveSnapshot();
+        var api = new RecordingMutation();
+        var native = new FakeDisplayNative { Snapshot = raw, HdrHandler = (_, target) => new NativeHdrState(true, target == 0, false) };
+        var backend = Backend(new SnapshotCapture(() => raw), native, api);
+        await backend.ApplyHdrAsync(Profile(raw), [], CancellationToken.None);
+        Assert.Equal(new uint[] { 0 }, api.HdrTargets);
+        Assert.Empty(api.DpiSources);
+        Assert.Empty(api.AppliedSources);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task PropertyOnlyPreflightStillRejectsOldOrIncompleteCaptures(int schema)
+    {
+        var raw = ActiveSnapshot();
+        var profile = Profile(raw) with
+        { CaptureSchemaVersion = schema, Displays = Profile(raw).Displays.Select(path => path with { TargetSignal = null }).ToArray() };
+        var api = new RecordingMutation();
+        var backend = Backend(new SnapshotCapture(() => raw), new FakeDisplayNative { Snapshot = raw }, api);
+        var error = await Assert.ThrowsAsync<MoniTopo.Core.Activation.ActivationFailureException>(() =>
+            backend.PreflightAsync(profile, [], CancellationToken.None));
+        Assert.Equal(schema == 1 ? "activation.profile.capture-outdated" : "activation.profile.target-signal-missing", error.ErrorCode);
+        Assert.Empty(api.AppliedSources);
+        Assert.Empty(api.DpiSources);
+        Assert.Empty(api.HdrTargets);
     }
 
     private static DisplayConfigMutationFacade Facade(RecordingMutation api)

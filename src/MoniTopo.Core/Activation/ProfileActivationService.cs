@@ -200,60 +200,101 @@ public sealed class ProfileActivationService(
                     resolution.Message ?? "The required displays could not be resolved.");
             }
 
-            rollbackSnapshot = await backend.CaptureRollbackSnapshotAsync(cancellationToken).ConfigureAwait(false);
             await backend.PreflightAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
+            var plan = DisplayActivationPlan.Create(profile, current, profileMatcher);
+            if (!plan.HasChanges)
+            {
+                // Confirm a sustained match, not just one sample. No rollback payload,
+                // companion, or native setter is needed for an already-active profile.
+                Report(progress, ActivationPhase.Verifying, "Checking the current display setup…");
+                try
+                {
+                    await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
+                }
+                catch (ActivationFailureException exception) when (exception.ErrorCode == "activation.verification.failed")
+                {
+                    throw new ActivationFailureException("activation.state.changed",
+                        "The display setup changed while MoniTopo was checking it. Try activating the profile again.", exception);
+                }
+                await stateStore.SetLastActivatedProfileAsync(profile.Id, cancellationToken).ConfigureAwait(false);
+                Report(progress, ActivationPhase.Completed, $"{profile.Name} is already active");
+                return Success(profile, mutationBegan: false);
+            }
 
-            Report(progress, ActivationPhase.Validating, "Asking Windows to validate the complete display setup…");
-            await backend.ValidateCoreConfigurationAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
+            rollbackSnapshot = await backend.CaptureRollbackSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            if (plan.CoreConfigurationRequired)
+            {
+                Report(progress, ActivationPhase.Validating, "Asking Windows to validate the display layout and modes…");
+                await backend.ValidateCoreConfigurationAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
+            }
             recoverySession = await recoveryCoordinator.StartAsync(rollbackSnapshot, cancellationToken).ConfigureAwait(false);
             backend.SetMutationGuard(() => recoverySession.EnsureOwnershipAsync(CancellationToken.None).GetAwaiter().GetResult());
             await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
-            Report(progress, ActivationPhase.ApplyingTopology, "Applying display topology and modes…");
-            mutationBegan = true;
-            await backend.ApplyCoreTemporaryAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
-            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-
-            Report(progress, ActivationPhase.WaitingForDisplays, "Waiting for displays to settle…");
-            await backend.WaitForStableTopologyAsync(cancellationToken).ConfigureAwait(false);
-            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-            var afterTopology = await backend.QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
-            var rebound = identityResolver.Resolve(profile, afterTopology.ConnectedDisplays);
-            if (rebound.Status != IdentityResolutionStatus.Success)
+            // A layout may have changed while the rollback companion was starting.
+            // Re-plan under writer ownership and validate fresh routing before applying.
+            plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
+            var coreApplied = false;
+            if (plan.CoreConfigurationRequired)
             {
-                throw new ActivationFailureException(
-                    "activation.identity.changed",
-                    "The displays could not be identified after Windows changed the topology.");
+                await backend.ValidateCoreConfigurationAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                Report(progress, ActivationPhase.ApplyingTopology, "Applying display layout and mode changes…");
+                mutationBegan = true;
+                await backend.ApplyCoreTemporaryAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                coreApplied = true;
+                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                Report(progress, ActivationPhase.WaitingForDisplays, "Waiting for displays to settle…");
+                await backend.WaitForStableTopologyAsync(cancellationToken).ConfigureAwait(false);
+                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            Report(progress, ActivationPhase.ApplyingScaling, "Applying Windows display scaling…");
-            await backend.ApplyScalingAsync(profile, rebound.Bindings, cancellationToken).ConfigureAwait(false);
-            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+            // Mode switches can reset DPI/HDR; HDR can in turn reset DPI. Recheck
+            // properties between phases, with a bounded number of repair passes.
+            // Native setters also re-read per-source/target state just before writing.
+            for (var pass = 0; pass < 3; pass++)
+            {
+                plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
+                if (!plan.ScalingRequired && !plan.HdrRequired) break;
+                if (plan.ScalingRequired)
+                {
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    Report(progress, ActivationPhase.ApplyingScaling, "Applying Windows display scale changes…");
+                    mutationBegan = true;
+                    await backend.ApplyScalingAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    await WaitForPropertyAsync(profile, scaling: true, cancellationToken).ConfigureAwait(false);
+                }
 
-            Report(progress, ActivationPhase.ApplyingHdr, "Applying HDR state…");
-            await backend.ApplyHdrAsync(profile, rebound.Bindings, cancellationToken).ConfigureAwait(false);
-            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
+                if (plan.HdrRequired)
+                {
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    Report(progress, ActivationPhase.ApplyingHdr, "Applying HDR changes…");
+                    mutationBegan = true;
+                    await backend.ApplyHdrAsync(profile, plan.IdentityResolution.Bindings, cancellationToken).ConfigureAwait(false);
+                    await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                    await WaitForPropertyAsync(profile, scaling: false, cancellationToken).ConfigureAwait(false);
+                }
+            }
 
             Report(progress, ActivationPhase.Verifying, "Verifying the complete display setup…");
             await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
             await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
-            Report(progress, ActivationPhase.Persisting, "Saving the verified topology in Windows…");
-            await backend.PersistCoreConfigurationAsync(cancellationToken).ConfigureAwait(false);
-            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
-            await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
+            if (coreApplied)
+            {
+                Report(progress, ActivationPhase.Persisting, "Saving the verified layout and modes in Windows…");
+                await backend.PersistCoreConfigurationAsync(cancellationToken).ConfigureAwait(false);
+                await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
+            }
             await stateStore.SetLastActivatedProfileAsync(profile.Id, cancellationToken).ConfigureAwait(false);
             await recoverySession.CompleteAsync(RecoveryTerminalOutcome.ActivationSucceeded, cancellationToken).ConfigureAwait(false);
 
-            Report(progress, ActivationPhase.Completed, $"{profile.Name} activated");
-            return new ActivationResult(
-                ActivationOutcome.Success,
-                $"{profile.Name} activated",
-                null,
-                true,
-                false,
-                false,
-                false);
+            var success = Success(profile, mutationBegan);
+            Report(progress, ActivationPhase.Completed, success.Message);
+            return success;
         }
         catch (Exception exception) when (exception is not OperationCanceledException || mutationBegan)
         {
@@ -378,6 +419,47 @@ public sealed class ProfileActivationService(
 
             _activationGate.Release();
         }
+    }
+
+    private async Task<DisplayActivationPlan> ReadPlanAsync(DisplayProfile profile, CancellationToken cancellationToken)
+    {
+        var started = _timeProvider.GetTimestamp();
+        while (_timeProvider.GetElapsedTime(started) < _verificationTimeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var current = await backend.QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
+                var plan = DisplayActivationPlan.Create(profile, current, profileMatcher);
+                if (plan.IdentityResolution.Status != IdentityResolutionStatus.Success)
+                {
+                    throw new ActivationFailureException("activation.identity.changed",
+                        "The required displays could not be identified while applying the profile.");
+                }
+                return plan;
+            }
+            catch (TransientDisplayReadException) { }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+        throw new ActivationFailureException("activation.read.unstable", "Windows did not provide a stable display state before the operation timed out.");
+    }
+
+    private static ActivationResult Success(DisplayProfile profile, bool mutationBegan) => new(
+        ActivationOutcome.Success, mutationBegan ? $"{profile.Name} activated" : $"{profile.Name} is already active",
+        null, mutationBegan, false, false, false);
+
+    private async Task WaitForPropertyAsync(DisplayProfile profile, bool scaling, CancellationToken cancellationToken)
+    {
+        // Setters can return before the driver exposes the new value. Poll rather
+        // than issuing the same write again while the first transition is pending.
+        var started = _timeProvider.GetTimestamp();
+        while (_timeProvider.GetElapsedTime(started) < _verificationTimeout)
+        {
+            var plan = await ReadPlanAsync(profile, cancellationToken).ConfigureAwait(false);
+            if (!(scaling ? plan.ScalingRequired : plan.HdrRequired)) return;
+            await Task.Delay(TimeSpan.FromMilliseconds(250), _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+        throw new ActivationFailureException("activation.verification.failed", "Windows did not apply every saved display setting.");
     }
 
     private async Task VerifyAsync(DisplayProfile profile, CancellationToken cancellationToken)

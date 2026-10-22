@@ -12,7 +12,15 @@ public sealed record ActiveProfileState(Guid? ProfileId, string DisplayName, boo
 
 public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolver)
 {
-    public ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current)
+    public ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current) =>
+        Match(profile, current, includeProperties: true);
+
+    // Use exactly the same topology/mode semantics for activation planning and final
+    // verification. DPI and HDR are independently mutable per-source/target properties.
+    public ProfileMatchResult MatchCoreConfiguration(DisplayProfile profile, CapturedDisplaySnapshot current) =>
+        Match(profile, current, includeProperties: false);
+
+    private ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current, bool includeProperties)
     {
         var resolution = identityResolver.Resolve(profile, current.ConnectedDisplays);
         if (resolution.Status != IdentityResolutionStatus.Success)
@@ -56,8 +64,8 @@ public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolve
                 !saved.RefreshRate.IsEquivalentTo(currentPath.RefreshRate, saved.ModeRequest is null ? 0.1 : 0.005) ||
                 saved.Orientation != currentPath.Orientation ||
                 (saved.ModeRequest is null && saved.PathScaling != currentPath.PathScaling) ||
-                saved.WindowsUiScalePercent != currentPath.WindowsUiScalePercent ||
-                saved.HdrEnabled != currentPath.HdrEnabled)
+                (includeProperties && (saved.WindowsUiScalePercent != currentPath.WindowsUiScalePercent ||
+                    saved.HdrEnabled != currentPath.HdrEnabled)))
             {
                 return new ProfileMatchResult(false, "display-state", resolution);
             }

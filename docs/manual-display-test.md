@@ -34,6 +34,15 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - Change the connected setup while an editor is open. A stale capability or changed profile must be rejected on Save; no display changes may happen during this check.
 - Activation failure must use the existing validated rollback/recovery path. Do not deliberately choose a destructive configuration or automate real writes to test the editor.
 
+## Change-aware activation (development branch)
+
+- Activate an already-matching profile from the tray and a hotkey. Confirm it reports already active without a display reset or flicker.
+- Use two otherwise identical profiles differing only in HDR. Leave the pointer on the other monitor and switch both ways; record whether it stays in place. HDR may still cause a driver/display transition, so this requires hardware validation.
+- Repeat with scale-only profiles, and with resolution/refresh-only profiles. Unrelated monitors' settings must remain unchanged, and the complete profile must match afterward.
+- Test a combined layout/mode/scale/HDR change, including enabling a currently inactive display. Verify properties after the topology settles; Windows may reset a property during the mode transition.
+- If cloned displays are available, verify shared-source scaling is consistent and per-target HDR still works. The application must reject conflicting scale values within one clone source.
+- After a property-only failure, verify exact restoration through the existing recovery checklist. Do not automate real failure injection or display writes.
+
 ## Missing, extra, and changed displays
 
 - Disconnect or fully power off the television while Desktop is active; Desktop should remain matched.

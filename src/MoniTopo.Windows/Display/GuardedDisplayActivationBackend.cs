@@ -131,10 +131,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureInteractiveSession();
+        DisplayConfigurationPlanBuilder.ValidateProfileCapture(profile);
         var available = QueryAll();
         _pendingPlan = null;
         _candidatePlans.Clear();
-        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
             ValidateScaleForPreflight(display, bindings, available);
@@ -145,7 +145,17 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             }
         }
 
-        _pendingPlan = plan;
+        return Task.CompletedTask;
+    }
+
+    private void BuildCorePlans(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings)
+    {
+        // Property-only activation must not build/validate/reapply a CCD mode plan.
+        // When needed, build from fresh routing immediately before validation.
+        var available = QueryAll();
+        _pendingPlan = null;
+        _candidatePlans.Clear();
+        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         for (var routingIndex = 0; routingIndex < 32; routingIndex++)
         {
             try
@@ -164,8 +174,6 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                 break;
             }
         }
-
-        return Task.CompletedTask;
     }
 
     public Task ValidateCoreConfigurationAsync(
@@ -174,7 +182,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _ = GetPendingPlan();
+        BuildCorePlans(profile, bindings);
         var failures = new List<DisplayActivationException>();
         foreach (var candidate in _candidatePlans)
         {
@@ -248,14 +256,22 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        foreach (var display in profile.Displays)
+        foreach (var group in profile.Displays.GroupBy(display => display.SourceGroupId, StringComparer.Ordinal))
         {
+            var display = group.First();
+            if (group.Any(path => path.WindowsUiScalePercent != display.WindowsUiScalePercent))
+            {
+                throw new ActivationFailureException("activation.scaling.clone-conflict", "Cloned displays must use the same Windows display scale.");
+            }
             var setting = await ReadWithRetryAsync(async () =>
             {
                 var path = await ResolveCurrentPropertyPathAsync(profile, display.DisplayId, cancellationToken).ConfigureAwait(false);
-                return (Path: path, Relative: ResolveRelativeScale(path.SourceInfo, display.WindowsUiScalePercent));
+                return (Path: path, Scale: ReadScaleSetting(_query, path.SourceInfo.AdapterId, path.SourceInfo.Id, display.WindowsUiScalePercent));
             }, _timeProvider, cancellationToken).ConfigureAwait(false);
-            _mutation.SetDpiScale(setting.Path.SourceInfo.AdapterId, setting.Path.SourceInfo.Id, setting.Relative);
+            if (setting.Scale.Desired != setting.Scale.Current)
+            {
+                _mutation.SetDpiScale(setting.Path.SourceInfo.AdapterId, setting.Path.SourceInfo.Id, setting.Scale.Desired);
+            }
         }
     }
 
@@ -469,7 +485,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         IDisplayConfigNativeFacade query,
         NativeAdapterId adapterId,
         uint sourceId,
-        int desiredPercent)
+        int desiredPercent) => ReadScaleSetting(query, adapterId, sourceId, desiredPercent).Desired;
+
+    private static (int Desired, int Current) ReadScaleSetting(
+        IDisplayConfigNativeFacade query, NativeAdapterId adapterId, uint sourceId, int desiredPercent)
     {
         var (errorCode, packet) = query.TryGetDpiScale(adapterId, sourceId);
         if (errorCode != DisplayConfigNativeFacade.ErrorSuccess)
@@ -488,7 +507,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                 $"Windows cannot apply the saved {desiredPercent}% display scale on this display.");
         }
 
-        return relativeScale;
+        return (relativeScale, packet.CurrentRelativeScale);
     }
 
     private static NativePathInfo? FindAvailableActivePath(

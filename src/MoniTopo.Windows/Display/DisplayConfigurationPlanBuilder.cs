@@ -9,6 +9,31 @@ internal static class DisplayConfigurationPlanBuilder
     private const uint SourceModeType = 1;
     private const uint TargetModeType = 2;
 
+    internal static void ValidateProfileCapture(DisplayProfile profile)
+    {
+        if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.MinimumActivatable)
+        {
+            throw new ActivationFailureException("activation.profile.capture-outdated",
+                $"{profile.Name} was captured before MoniTopo could distinguish the Windows HDR setting reliably. Update the profile from the current setup before activating it.");
+        }
+        foreach (var display in profile.Displays)
+        {
+            if (display.TargetSignal is null && display.ModeRequest is null)
+            {
+                throw new ActivationFailureException("activation.profile.target-signal-missing",
+                    $"{display.FriendlyLabel} was captured by an older MoniTopo version. Update the profile from the current setup before activating it.");
+            }
+        }
+        foreach (var group in profile.Displays.GroupBy(display => display.SourceGroupId, StringComparer.Ordinal))
+        {
+            EnsureConsistentSourceMode(group.ToArray());
+            if (group.Any(display => display.WindowsUiScalePercent != group.First().WindowsUiScalePercent))
+            {
+                throw new ActivationFailureException("activation.scaling.clone-conflict", "Cloned displays must use the same Windows display scale.");
+            }
+        }
+    }
+
     internal static NativeDisplaySnapshot Build(
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
@@ -16,12 +41,7 @@ internal static class DisplayConfigurationPlanBuilder
         bool forceVirtualModeIndexes = false,
         int sourceRoutingIndex = 0)
     {
-        if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.MinimumActivatable)
-        {
-            throw new ActivationFailureException(
-                "activation.profile.capture-outdated",
-                $"{profile.Name} was captured before MoniTopo could distinguish the Windows HDR setting reliably. Update the profile from the current setup before activating it.");
-        }
+        ValidateProfileCapture(profile);
 
         var bindingByDisplay = bindings.ToDictionary(binding => binding.DisplayId, StringComparer.OrdinalIgnoreCase);
         var targetPaths = availableConfiguration.Paths
@@ -67,13 +87,6 @@ internal static class DisplayConfigurationPlanBuilder
         var paths = new List<NativePathInfo>(profile.Displays.Count);
         foreach (var display in profile.Displays)
         {
-            if (display.TargetSignal is null && display.ModeRequest is null)
-            {
-                throw new ActivationFailureException(
-                    "activation.profile.target-signal-missing",
-                    $"{display.FriendlyLabel} was captured by an older MoniTopo version. Update the profile from the current setup before activating it.");
-            }
-
             var binding = bindingByDisplay[display.DisplayId];
             var source = sourceAssignments[display.SourceGroupId];
             var availablePath = targetPaths[binding.RuntimeId]
