@@ -1,6 +1,6 @@
 # Changelog
 
-## Profile settings editor — not yet released
+## 2026.10.22.1 — display settings editor
 
 - Edit saved resolution, refresh rate, HDR, and Windows scale through display-capability dropdowns; saving is separate from activation.
 - Filter refresh rates by resolution, preserve fractional rates, recheck available options before saving, and keep unavailable values intact.
@@ -8,6 +8,8 @@
 - Keep cloned source mode/scale changes capture-based; supported per-target HDR remains editable.
 - Change only the display-setting categories that differ: skip unchanged topology/modes, scale, and HDR, and avoid all display writes for already-active profiles. Recheck properties after transitions and retain complete verification and rollback.
 - Repair mode changes caused by HDR transitions and scale/HDR resets caused by Windows persistence, with bounded revalidation and exact rollback rather than accepting partial settings.
+
+Manually qualified on one two-monitor setup, including combined settings and exact injected-failure rollback. Other drivers, docks, clones, and mixed-DPI UI still require the manual checklist. Packages remain unsigned; real display activation still requires explicit user opt-in.
 
 ## 2026.10.22 — first release
 
