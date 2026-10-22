@@ -52,7 +52,7 @@ public sealed class JsonConfigurationStoreTests
 
             var exception = await Assert.ThrowsAsync<ConfigurationLoadException>(() => store.LoadAsync());
 
-            Assert.False(File.Exists(configurationPath));
+            Assert.True(File.Exists(configurationPath));
             Assert.Equal(Path.Combine(path, "config.corrupt.20260720123000000.json"), exception.PreservedPath);
             Assert.True(File.Exists(exception.PreservedPath));
         });

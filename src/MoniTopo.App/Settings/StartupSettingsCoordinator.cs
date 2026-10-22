@@ -5,8 +5,10 @@ namespace MoniTopo.App.Settings;
 
 public sealed class StartupSettingsCoordinator(
     ConfigurationSession configuration,
-    IRunAtLoginService runAtLogin)
+    IRunAtLoginService runAtLogin) : IDisposable
 {
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private int _disposed;
     public IRunAtLoginService RunAtLogin => runAtLogin;
 
     public async Task CompleteFirstRunAsync(bool enabled, CancellationToken cancellationToken = default) =>
@@ -26,23 +28,32 @@ public sealed class StartupSettingsCoordinator(
         bool? firstRunCompleted,
         CancellationToken cancellationToken)
     {
-        var wasEnabled = runAtLogin.IsEnabled;
-        runAtLogin.SetEnabled(enabled);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await configuration.UpdateAsync(current => current with
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var wasEnabled = runAtLogin.IsEnabled;
+            runAtLogin.SetEnabled(enabled);
+            try
             {
-                ApplicationSettings = current.ApplicationSettings with
+                await configuration.UpdateAsync(current => current with
                 {
-                    RunAtLogin = enabled,
-                    FirstRunCompleted = firstRunCompleted ?? current.ApplicationSettings.FirstRunCompleted,
-                },
-            }, cancellationToken).ConfigureAwait(false);
+                    ApplicationSettings = current.ApplicationSettings with
+                    {
+                        RunAtLogin = enabled,
+                        FirstRunCompleted = firstRunCompleted ?? current.ApplicationSettings.FirstRunCompleted,
+                    },
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                runAtLogin.SetEnabled(wasEnabled);
+                throw;
+            }
         }
-        catch
-        {
-            runAtLogin.SetEnabled(wasEnabled);
-            throw;
-        }
+        finally { _operationGate.Release(); }
     }
+
+    public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
 }

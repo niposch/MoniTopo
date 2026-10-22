@@ -34,7 +34,11 @@ public sealed class VelopackUpdateClient : IUpdateClient
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _available = await _manager.CheckForUpdatesAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Velopack's check has no cancellation parameter. Keep the coordinator's operation
+            // lease until the real operation completes; WaitAsync would leave it running in parallel.
+            var available = await _manager.CheckForUpdatesAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            _available = available;
             return _available is null ? null : ToAvailableUpdate(_available.TargetFullRelease);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

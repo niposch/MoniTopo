@@ -15,16 +15,20 @@ public interface IConfigurationStore
 
 public sealed class ConfigurationLoadException : IOException
 {
-    public ConfigurationLoadException(string message, string originalPath, string? preservedPath, Exception innerException)
+    public ConfigurationLoadException(string message, string originalPath, string? preservedPath, Exception innerException,
+        string? validBackupPath = null)
         : base(message, innerException)
     {
         OriginalPath = originalPath;
         PreservedPath = preservedPath;
+        ValidBackupPath = validBackupPath;
     }
 
     public string OriginalPath { get; }
 
     public string? PreservedPath { get; }
+
+    public string? ValidBackupPath { get; }
 }
 
 public sealed class JsonConfigurationStore : IConfigurationStore
@@ -34,6 +38,7 @@ public sealed class JsonConfigurationStore : IConfigurationStore
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         PropertyNameCaseInsensitive = false,
+        RespectNullableAnnotations = true,
     };
 
     private readonly string _configurationPath;
@@ -50,41 +55,82 @@ public sealed class JsonConfigurationStore : IConfigurationStore
     {
         if (!File.Exists(_configurationPath))
         {
-            return ApplicationConfiguration.CreateDefault();
+            if (!File.Exists(_configurationPath + ".bak")) return ApplicationConfiguration.CreateDefault();
+            string? backupPath = null;
+            Exception reason = new IOException("The configuration file is missing but a backup exists.");
+            try
+            {
+                await ReadAsync(_configurationPath + ".bak", cancellationToken).ConfigureAwait(false);
+                backupPath = _configurationPath + ".bak";
+            }
+            catch (Exception exception) when (IsInvalidDocument(exception) || exception is IOException or UnauthorizedAccessException)
+            {
+                reason = exception;
+            }
+            throw new ConfigurationLoadException("The configuration is missing. Restore a valid backup before continuing.",
+                _configurationPath, null, reason, backupPath);
         }
 
         try
         {
-            await using var stream = new FileStream(
-                _configurationPath,
+            return await ReadAsync(_configurationPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsInvalidDocument(exception))
+        {
+            var preservedPath = PreserveInvalidConfiguration();
+            string? validBackupPath = null;
+            try
+            {
+                await ReadAsync(_configurationPath + ".bak", cancellationToken).ConfigureAwait(false);
+                validBackupPath = _configurationPath + ".bak";
+            }
+            catch (Exception backupException) when (IsInvalidDocument(backupException) || backupException is IOException or UnauthorizedAccessException)
+            {
+                // The original error remains the actionable failure. An invalid backup is never restored.
+            }
+
+            throw new ConfigurationLoadException(
+                "MoniTopo could not read the configuration. Restore a valid backup or repair the preserved file before continuing.",
+                _configurationPath, preservedPath, exception, validBackupPath);
+        }
+    }
+
+    public async Task<ApplicationConfiguration> RestoreBackupAsync(CancellationToken cancellationToken = default)
+    {
+        var backup = await ReadAsync(_configurationPath + ".bak", cancellationToken).ConfigureAwait(false);
+        PreserveInvalidConfiguration();
+        await SaveDocumentAsync(backup, keepBackup: true, cancellationToken).ConfigureAwait(false);
+        return backup;
+    }
+
+    private static async Task<ApplicationConfiguration> ReadAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+                path,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.Read,
                 bufferSize: 4096,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var node = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false)
-                ?? throw new JsonException("The configuration document is empty.");
-            var migrated = Migrate(node);
-            var configuration = migrated.Deserialize<ApplicationConfiguration>(SerializerOptions)
-                ?? throw new JsonException("The configuration document could not be read.");
-            ConfigurationValidator.EnsureValid(configuration);
-            return configuration;
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException or ConfigurationValidationException)
-        {
-            var preservedPath = PreserveInvalidConfiguration();
-            throw new ConfigurationLoadException(
-                "MoniTopo could not read the configuration. The invalid file was preserved for recovery.",
-                _configurationPath,
-                preservedPath,
-                exception);
-        }
+        var node = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false)
+            ?? throw new JsonException("The configuration document is empty.");
+        var migrated = Migrate(node);
+        ValidateShape(migrated);
+        var configuration = migrated.Deserialize<ApplicationConfiguration>(SerializerOptions)
+            ?? throw new JsonException("The configuration document could not be read.");
+        ConfigurationValidator.EnsureValid(configuration);
+        return configuration;
     }
 
     public async Task SaveAsync(ApplicationConfiguration configuration, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ConfigurationValidator.EnsureValid(configuration);
+        await SaveDocumentAsync(configuration, keepBackup: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SaveDocumentAsync(ApplicationConfiguration configuration, bool keepBackup, CancellationToken cancellationToken)
+    {
 
         var directory = Path.GetDirectoryName(_configurationPath)
             ?? throw new InvalidOperationException("The configuration path has no parent directory.");
@@ -110,7 +156,7 @@ public sealed class JsonConfigurationStore : IConfigurationStore
 
             if (File.Exists(_configurationPath))
             {
-                File.Replace(temporaryPath, _configurationPath, backupPath, ignoreMetadataErrors: true);
+                File.Replace(temporaryPath, _configurationPath, keepBackup ? null : backupPath, ignoreMetadataErrors: true);
             }
             else
             {
@@ -133,7 +179,17 @@ public sealed class JsonConfigurationStore : IConfigurationStore
             throw new JsonException("The configuration root must be an object.");
         }
 
-        var schemaVersion = root["schemaVersion"]?.GetValue<int>() ?? 0;
+        var schemaVersion = 0;
+        if (root.TryGetPropertyValue("schemaVersion", out var versionNode) &&
+            (versionNode is not JsonValue versionValue || !versionValue.TryGetValue(out schemaVersion)))
+        {
+            throw new JsonException("The configuration schema version must be an integer.");
+        }
+
+        if (schemaVersion < 0)
+        {
+            throw new JsonException("The configuration schema version must not be negative.");
+        }
         if (schemaVersion > ApplicationConfiguration.CurrentSchemaVersion)
         {
             throw new JsonException("The configuration was created by a newer MoniTopo version.");
@@ -142,9 +198,9 @@ public sealed class JsonConfigurationStore : IConfigurationStore
         if (schemaVersion == 0)
         {
             root["schemaVersion"] = 1;
-            root["applicationSettings"] ??= JsonSerializer.SerializeToNode(ApplicationSettings.Default, SerializerOptions);
-            root["profiles"] ??= new JsonArray();
-            root["profileOrder"] ??= new JsonArray();
+            if (!root.ContainsKey("applicationSettings")) root["applicationSettings"] = JsonSerializer.SerializeToNode(ApplicationSettings.Default, SerializerOptions);
+            if (!root.ContainsKey("profiles")) root["profiles"] = new JsonArray();
+            if (!root.ContainsKey("profileOrder")) root["profileOrder"] = new JsonArray();
             schemaVersion = 1;
         }
 
@@ -176,7 +232,65 @@ public sealed class JsonConfigurationStore : IConfigurationStore
             preservedPath = Path.Combine(directory, $"config.corrupt.{timestamp}.{suffix}.json");
         }
 
-        File.Move(_configurationPath, preservedPath);
+        File.Copy(_configurationPath, preservedPath, overwrite: false);
         return preservedPath;
+    }
+
+    private static bool IsInvalidDocument(Exception exception) =>
+        exception is JsonException or NotSupportedException or ConfigurationValidationException;
+
+    private static void ValidateShape(JsonObject root)
+    {
+        Require(root, "applicationSettings", JsonValueKind.Object);
+        Require(root, "profiles", JsonValueKind.Array);
+        Require(root, "profileOrder", JsonValueKind.Array);
+        var settings = (JsonObject)root["applicationSettings"]!;
+        foreach (var property in new[] { "runAtLogin", "updateChecksEnabled", "firstRunCompleted", "showMainWindowOnLaunch" })
+            Require(settings, property, JsonValueKind.True, JsonValueKind.False);
+        Require(settings, "popupHotkey", JsonValueKind.Object);
+        ValidateHotkey((JsonObject)settings["popupHotkey"]!);
+        foreach (var node in (JsonArray)root["profiles"]!)
+        {
+            if (node is not JsonObject profile) throw new JsonException("Each profile must be an object.");
+            foreach (var property in new[] { "id", "name", "createdUtc", "updatedUtc", "primaryDisplayId" })
+                Require(profile, property, JsonValueKind.String);
+            Require(profile, "captureSchemaVersion", JsonValueKind.Number);
+            Require(profile, "displays", JsonValueKind.Array);
+            Require(profile, "lastSuccessfulIdentityBindings", JsonValueKind.Array);
+            if (profile["directHotkey"] is JsonObject hotkey) ValidateHotkey(hotkey);
+            foreach (var bindingNode in (JsonArray)profile["lastSuccessfulIdentityBindings"]!)
+            {
+                if (bindingNode is not JsonObject binding) throw new JsonException("Each identity binding must be an object.");
+                Require(binding, "displayId", JsonValueKind.String);
+                Require(binding, "runtimeIdentityKey", JsonValueKind.String);
+            }
+            foreach (var displayNode in (JsonArray)profile["displays"]!)
+            {
+                if (displayNode is not JsonObject display) throw new JsonException("Each display must be an object.");
+                foreach (var property in new[] { "displayId", "sourceGroupId", "friendlyLabel" })
+                    Require(display, property, JsonValueKind.String);
+                foreach (var property in new[] { "identity", "position", "sourceResolution", "refreshRate" })
+                    Require(display, property, JsonValueKind.Object);
+                foreach (var property in new[] { "orientation", "pathScaling", "windowsUiScalePercent" })
+                    Require(display, property, JsonValueKind.Number);
+                foreach (var property in new[] { "hdrEnabled", "isPrimary" })
+                    Require(display, property, JsonValueKind.True, JsonValueKind.False);
+                foreach (var property in new[] { "x", "y" }) Require((JsonObject)display["position"]!, property, JsonValueKind.Number);
+                foreach (var property in new[] { "width", "height" }) Require((JsonObject)display["sourceResolution"]!, property, JsonValueKind.Number);
+                foreach (var property in new[] { "numerator", "denominator" }) Require((JsonObject)display["refreshRate"]!, property, JsonValueKind.Number);
+            }
+        }
+    }
+
+    private static void ValidateHotkey(JsonObject hotkey)
+    {
+        Require(hotkey, "modifiers", JsonValueKind.Number);
+        Require(hotkey, "virtualKey", JsonValueKind.Number);
+    }
+
+    private static void Require(JsonObject value, string property, params JsonValueKind[] kinds)
+    {
+        if (value[property] is not { } node || !kinds.Contains(node.GetValueKind()))
+            throw new JsonException($"The configuration member '{property}' is missing or has an invalid type.");
     }
 }

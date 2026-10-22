@@ -2,6 +2,7 @@ using MoniTopo.Core.Activation;
 using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Persistence;
 using MoniTopo.Core.Updates;
+using MoniTopo.Core.Validation;
 
 namespace MoniTopo.App.State;
 
@@ -9,10 +10,12 @@ public sealed class ConfigurationSession(IConfigurationStore store, ApplicationC
     : IActivationStateStore, IUpdateSettingsStore, IDisposable
 {
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private int _disposed;
 
     public ApplicationConfiguration Current { get; private set; } = current;
 
     public event EventHandler<ApplicationConfiguration>? Changed;
+    public event EventHandler<Exception>? NotificationFailed;
 
     public bool AutomaticUpdateChecksEnabled => Current.ApplicationSettings.UpdateChecksEnabled;
 
@@ -42,19 +45,38 @@ public sealed class ConfigurationSession(IConfigurationStore store, ApplicationC
         Func<ApplicationConfiguration, ApplicationConfiguration> update,
         CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             var next = update(Current);
+            ConfigurationValidator.EnsureValid(next);
+            if (ReferenceEquals(next, Current)) return;
             await store.SaveAsync(next, cancellationToken).ConfigureAwait(false);
             Current = next;
-            Changed?.Invoke(this, next);
         }
         finally
         {
             _saveGate.Release();
         }
+
+        // Subscribers may save again, so no observer runs under the persistence gate.
+        // UI subscribers must read Current when their dispatcher callback executes.
+        foreach (var subscriber in Changed?.GetInvocationList() ?? [])
+        {
+            try { ((EventHandler<ApplicationConfiguration>)subscriber)(this, Current); }
+            catch (Exception exception)
+            {
+                foreach (var observer in NotificationFailed?.GetInvocationList() ?? [])
+                {
+                    try { ((EventHandler<Exception>)observer)(this, exception); }
+                    catch (Exception notificationException) { System.Diagnostics.Trace.TraceError("Configuration notification failed: {0}", notificationException); }
+                }
+            }
+        }
     }
 
-    public void Dispose() => _saveGate.Dispose();
+    // Do not dispose a gate that a pending save still needs to release.
+    public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
 }

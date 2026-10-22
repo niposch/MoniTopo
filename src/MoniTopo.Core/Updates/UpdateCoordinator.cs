@@ -75,7 +75,10 @@ public sealed class UpdateCoordinator : IDisposable
     private readonly IUpdateSettingsStore _settings;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private bool _disposed;
+    private readonly CancellationTokenSource _lifetime = new();
+    private DateTimeOffset? _lastAutomaticAttemptUtc;
+    private int _disposed;
+    private int _schedulerRunning;
 
     public UpdateCoordinator(
         IUpdateClient client,
@@ -99,6 +102,7 @@ public sealed class UpdateCoordinator : IDisposable
     public bool AutomaticChecksEnabled => _settings.AutomaticUpdateChecksEnabled;
 
     public event EventHandler<UpdateState>? Changed;
+    public event EventHandler<Exception>? NotificationFailed;
 
     public async Task SetAutomaticChecksEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         await _settings.SetAutomaticUpdateChecksEnabledAsync(enabled, cancellationToken).ConfigureAwait(false);
@@ -106,13 +110,38 @@ public sealed class UpdateCoordinator : IDisposable
     public async Task<UpdateState> CheckAutomaticallyAsync(CancellationToken cancellationToken = default)
     {
         var now = _timeProvider.GetUtcNow();
-        if (!_settings.AutomaticUpdateChecksEnabled ||
+        if (!_settings.AutomaticUpdateChecksEnabled || !_client.IsInstalled ||
+            _lastAutomaticAttemptUtc is { } attempt && now - attempt < TimeSpan.FromHours(1) ||
             _settings.LastSuccessfulUpdateCheckUtc is { } lastCheck && now - lastCheck < AutomaticCheckInterval)
         {
             return Current;
         }
 
+        _lastAutomaticAttemptUtc = now;
         return await CheckCoreAsync(now, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Run once for the application lifetime; checks never download an update.</summary>
+    public async Task RunAutomaticChecksAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Interlocked.Exchange(ref _schedulerRunning, 1) != 0)
+            throw new InvalidOperationException("The automatic update scheduler is already running.");
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), _timeProvider, linked.Token).ConfigureAwait(false);
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                await CheckAutomaticallyAsync(linked.Token).ConfigureAwait(false);
+                // Re-evaluate settings periodically, including checks re-enabled while the app stays open.
+                await Task.Delay(TimeSpan.FromMinutes(15), _timeProvider, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested) { }
+        catch (ObjectDisposedException) when (_lifetime.IsCancellationRequested) { }
+        finally { Volatile.Write(ref _schedulerRunning, 0); }
     }
 
     public Task<UpdateState> CheckNowAsync(CancellationToken cancellationToken = default) =>
@@ -120,11 +149,9 @@ public sealed class UpdateCoordinator : IDisposable
 
     public async Task<UpdateState> DownloadAsync(CancellationToken cancellationToken = default)
     {
-        if (Current.Status != UpdateStatus.Available || Current.Update is not { } update)
-        {
-            return Current;
-        }
-
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        cancellationToken = linked.Token;
         if (!await _operationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             return Current;
@@ -132,30 +159,37 @@ public sealed class UpdateCoordinator : IDisposable
 
         try
         {
-            SetState(new UpdateState(UpdateStatus.Downloading, update, 0, $"Downloading version {update.DisplayVersion}…"));
-            var progress = new CallbackProgress<int>(value => SetState(new UpdateState(
-                UpdateStatus.Downloading,
-                update,
-                Math.Clamp(value, 0, 100),
-                $"Downloading version {update.DisplayVersion}: {Math.Clamp(value, 0, 100)}%")));
-            await _client.DownloadAsync(update, progress, cancellationToken).ConfigureAwait(false);
-            SetState(new UpdateState(
-                UpdateStatus.ReadyToInstall,
-                update,
-                100,
-                $"Version {update.DisplayVersion} is ready to install."));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            SetState(new UpdateState(UpdateStatus.Available, update, 0, "Update download canceled."));
-        }
-        catch (UpdateClientException exception)
-        {
-            SetState(ErrorState(exception, update));
-        }
-        catch (Exception exception)
-        {
-            SetState(ErrorState(new UpdateClientException(UpdateClientError.Unknown, exception.Message, exception), update));
+            if (RefreshStagedState() || Current.Status != UpdateStatus.Available || Current.Update is not { } update)
+                return Current;
+            var previous = Current;
+            try
+            {
+                SetState(new UpdateState(UpdateStatus.Downloading, update, 0, $"Downloading version {update.DisplayVersion}…"));
+                var progress = new CallbackProgress<int>(value =>
+                {
+                    if (Current.Status != UpdateStatus.Downloading || Current.Update != update) return;
+                    SetState(new UpdateState(UpdateStatus.Downloading, update, Math.Clamp(value, 0, 100),
+                        $"Downloading version {update.DisplayVersion}: {Math.Clamp(value, 0, 100)}%"));
+                });
+                await _client.DownloadAsync(update, progress, cancellationToken).ConfigureAwait(false);
+                SetState(new UpdateState(
+                    UpdateStatus.ReadyToInstall,
+                    update,
+                    100,
+                    $"Version {update.DisplayVersion} is ready to install."));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                if (!RefreshStagedState()) SetState(previous with { Message = "Update download canceled. Download update to try again." });
+            }
+            catch (UpdateClientException exception)
+            {
+                if (!RefreshStagedState()) SetState(previous with { Message = ErrorState(exception, update).Message });
+            }
+            catch (Exception exception)
+            {
+                if (!RefreshStagedState()) SetState(previous with { Message = ErrorState(new UpdateClientException(UpdateClientError.Unknown, exception.Message, exception), update).Message });
+            }
         }
         finally
         {
@@ -167,37 +201,32 @@ public sealed class UpdateCoordinator : IDisposable
 
     public void InstallAndRestart()
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (Current.Status != UpdateStatus.ReadyToInstall || Current.Update is not { } update)
         {
             return;
         }
 
-        _client.ApplyAndRestart(update);
+        try { _client.ApplyAndRestart(update); }
+        catch (Exception exception)
+        {
+            var error = exception as UpdateClientException ?? new(UpdateClientError.Unknown, exception.Message, exception);
+            SetState(Current with { Message = ErrorState(error, update).Message + " Restart now to try again." });
+        }
     }
 
     public void Dispose()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _operationGate.Dispose();
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _lifetime.Cancel();
+        // Pending operations still own these managed synchronization objects until they finish.
     }
 
     private async Task<UpdateState> CheckCoreAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (!_client.IsInstalled)
-        {
-            SetState(new UpdateState(
-                UpdateStatus.NotInstalled,
-                null,
-                0,
-                "Update checks are available in an installed or packaged copy of MoniTopo."));
-            return Current;
-        }
-
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        cancellationToken = linked.Token;
         if (!await _operationGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             return Current;
@@ -205,24 +234,34 @@ public sealed class UpdateCoordinator : IDisposable
 
         try
         {
-            SetState(new UpdateState(UpdateStatus.Checking, null, 0, "Checking for updates…"));
-            var update = await _client.CheckAsync(cancellationToken).ConfigureAwait(false);
-            await _settings.SetLastSuccessfulUpdateCheckUtcAsync(now, cancellationToken).ConfigureAwait(false);
-            SetState(update is null
-                ? new UpdateState(UpdateStatus.UpToDate, null, 0, "MoniTopo is up to date.")
-                : new UpdateState(UpdateStatus.Available, update, 0, $"Version {update.DisplayVersion} is available."));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            SetState(UpdateState.Idle);
-        }
-        catch (UpdateClientException exception)
-        {
-            SetState(ErrorState(exception, null));
-        }
-        catch (Exception exception)
-        {
-            SetState(ErrorState(new UpdateClientException(UpdateClientError.Unknown, exception.Message, exception), null));
+            if (RefreshStagedState()) return Current;
+            if (!_client.IsInstalled)
+            {
+                SetState(ErrorState(new(UpdateClientError.NotInstalled, string.Empty), null));
+                return Current;
+            }
+            var previous = Current;
+            try
+            {
+                SetState(new UpdateState(UpdateStatus.Checking, null, 0, "Checking for updates…"));
+                var update = await _client.CheckAsync(cancellationToken).ConfigureAwait(false);
+                await _settings.SetLastSuccessfulUpdateCheckUtcAsync(now, cancellationToken).ConfigureAwait(false);
+                if (!RefreshStagedState()) SetState(update is null
+                    ? new UpdateState(UpdateStatus.UpToDate, null, 0, "MoniTopo is up to date.")
+                    : new UpdateState(UpdateStatus.Available, update, 0, $"Version {update.DisplayVersion} is available."));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                if (!RefreshStagedState()) SetState(previous);
+            }
+            catch (UpdateClientException exception)
+            {
+                if (!RefreshStagedState()) SetState(previous.Update is null ? ErrorState(exception, null) : previous with { Message = ErrorState(exception, previous.Update).Message });
+            }
+            catch (Exception exception)
+            {
+                if (!RefreshStagedState()) SetState(previous.Update is null ? ErrorState(new(UpdateClientError.Unknown, exception.Message, exception), null) : previous);
+            }
         }
         finally
         {
@@ -230,6 +269,14 @@ public sealed class UpdateCoordinator : IDisposable
         }
 
         return Current;
+    }
+
+    private bool RefreshStagedState()
+    {
+        var pending = _client.PendingRestart ?? (Current.Status == UpdateStatus.ReadyToInstall ? Current.Update : null);
+        if (pending is null) return false;
+        SetState(new(UpdateStatus.ReadyToInstall, pending, 100, $"Version {pending.DisplayVersion} is ready to install."));
+        return true;
     }
 
     private static UpdateState ErrorState(UpdateClientException exception, AvailableUpdate? update)
@@ -253,7 +300,18 @@ public sealed class UpdateCoordinator : IDisposable
     private void SetState(UpdateState state)
     {
         Current = state;
-        Changed?.Invoke(this, state);
+        foreach (var subscriber in Changed?.GetInvocationList() ?? [])
+        {
+            try { ((EventHandler<UpdateState>)subscriber)(this, state); }
+            catch (Exception exception)
+            {
+                foreach (var observer in NotificationFailed?.GetInvocationList() ?? [])
+                {
+                    try { ((EventHandler<Exception>)observer)(this, exception); }
+                    catch (Exception notificationException) { System.Diagnostics.Trace.TraceError("Update notification failed: {0}", notificationException); }
+                }
+            }
+        }
     }
 
     private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>

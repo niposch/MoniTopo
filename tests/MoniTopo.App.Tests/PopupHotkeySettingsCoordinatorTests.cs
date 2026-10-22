@@ -1,3 +1,4 @@
+using MoniTopo.App.Interaction;
 using MoniTopo.App.Settings;
 using MoniTopo.App.State;
 using MoniTopo.Core.Configuration;
@@ -58,6 +59,55 @@ public sealed class PopupHotkeySettingsCoordinatorTests
 
         Assert.Equal(previous, registrations[1]);
         Assert.Equal(previous, session.Current.ApplicationSettings.PopupHotkey);
+    }
+
+    [Fact]
+    public async Task DelayedSaveFailureRestoresRegistrationThroughOwningDispatcher()
+    {
+        var store = new DelayedFailureStore();
+        using var session = new ConfigurationSession(store, ApplicationConfiguration.CreateDefault());
+        var previous = session.Current.ApplicationSettings.PopupHotkey;
+        var dispatcher = new CheckingDispatcher();
+        var registrations = new List<HotkeyBinding>();
+        using var coordinator = new PopupHotkeySettingsCoordinator(session, binding =>
+        {
+            Assert.True(dispatcher.IsInvoking);
+            registrations.Add(binding);
+            return new(true, null, false);
+        }, dispatcher);
+        var pending = coordinator.SetAsync(new(HotkeyModifiers.Shift, 0x50));
+        await store.Started.Task;
+        store.Failure.SetException(new IOException("disk full"));
+        await Assert.ThrowsAsync<IOException>(() => pending);
+        Assert.Equal(2, registrations.Count);
+        Assert.Equal(previous, registrations[1]);
+        Assert.Equal(2, dispatcher.CallCount);
+    }
+
+    private sealed class CheckingDispatcher : IUiDispatcher
+    {
+        internal bool IsInvoking { get; private set; }
+        internal int CallCount { get; private set; }
+        public Task InvokeAsync(Action action)
+        {
+            CallCount++;
+            IsInvoking = true;
+            try { action(); }
+            finally { IsInvoking = false; }
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class DelayedFailureStore : IConfigurationStore
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<ApplicationConfiguration> LoadAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SaveAsync(ApplicationConfiguration configuration, CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            return Failure.Task;
+        }
     }
 
     private sealed class MemoryStore : IConfigurationStore
