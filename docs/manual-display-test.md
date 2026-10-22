@@ -62,7 +62,7 @@ Local validation on 22 October 2026 completed two round trips between the existi
 
 - Install per-user without administrator rights; record the expected unsigned SmartScreen warning.
 - Confirm Start Menu launch, first-run autostart choice, repair/reinstall behavior, and uninstall cleanup including the startup entry.
-- Check for an update against a draft test release. Confirm checks do not download automatically, clicking the popup update hint starts the download, and the staged update is applied by either **Restart now** or the next application launch.
+- Check for an update against a published stable test release, or use a local fake feed for isolated tests. Drafts and prereleases must not be offered by the production updater. Confirm checks do not download automatically, clicking the popup update hint starts the download, and the staged update is applied by either **Restart now** or the next application launch.
 - Before downloading, open **Release notes** from both the tray and Settings. Confirm the available version, complete scrollable notes, selectable text, and no download or restart. If the feed omits notes, check the explicit unavailable message. Notes must remain accessible while downloading and after staging.
 - After a download, run Check for updates again; Restart now must remain available for the staged update. Leave an installed copy running across a daily interval and confirm automatic checks continue without restarting the app.
 - Confirm the installed and portable builds display the expected date-formatted version.

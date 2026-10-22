@@ -1,6 +1,12 @@
 # Changelog
 
-## Reliability fixes awaiting hardware validation
+## 22.10.26 — first release
+
+- Save and restore Windows display profiles from the tray or global hotkeys, including topology, primary display, modes, Windows scale, and HDR.
+- Use the Settings page for sign-in startup, popup shortcuts, theme choice, and manual staged updates.
+- Read update release notes before choosing to download; stable builds only check stable releases.
+
+### Reliability and interface changes since the release candidate
 
 - Coordinate activation and recovery through exclusive display-writer ownership, explicit recovery outcomes, and startup recovery reports.
 - Wait for complete display-setting convergence, verify rollback before saving it, and preserve virtual desktop-image and refresh-boost data in new profiles.
@@ -13,6 +19,13 @@
 - Replace generic tray glyphs with saved-layout schematics and legible theme-aware tiles; anchor the popup beside the primary monitor's notification area independently of the pointer.
 - Add System/Light/Dark theme selection, share the tray icon with the application, and move profile editing actions above the preview.
 - Show complete release notes from the tray or Settings before downloading an update.
+
+### Limitations
+
+- Windows 11 x64 is the supported target; Windows 10 is best effort.
+- Display activation still requires an explicit user action and `MONITOPO_ALLOW_REAL_DISPLAY_CHANGES=1` in the app's environment. The default launch is read-only.
+- The installer is unsigned. Windows SmartScreen may warn about the publisher.
+- Per-monitor Windows scaling uses an isolated runtime-probed contract. Docks, clones, mixed-DPI placement, and different GPU/driver combinations require validation on the intended hardware; no vendor-specific controls or brightness changes are included.
 
 ## 22.07.26 release candidate
 

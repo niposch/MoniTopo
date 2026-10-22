@@ -9,7 +9,7 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <Version Condition="'$(Version)' == ''">2026.808.0</Version>
+    <Version Condition="'$(Version)' == ''">2026.1022.0</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>$(Version).0</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>

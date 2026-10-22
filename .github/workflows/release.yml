@@ -1,4 +1,4 @@
-name: Release candidate
+name: Release
 
 on:
   push:
@@ -9,6 +9,10 @@ on:
       package_version:
         description: Package version in YYYY.MDD.R form
         required: true
+      prerelease:
+        description: Mark the draft as a prerelease
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,12 +34,16 @@ jobs:
         shell: pwsh
         env:
           DISPATCH_VERSION: ${{ inputs.package_version }}
+          PRERELEASE: ${{ inputs.prerelease || false }}
         run: |
           $packageVersion = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.Substring(1) } else { $env:DISPATCH_VERSION }
           $release = ./eng/Get-ReleaseVersion.ps1 -PackageVersion $packageVersion
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "package=$($release.PackageVersion)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "display=$($release.DisplayVersion)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tag=$($release.Tag)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "prerelease=$($env:PRERELEASE.ToLowerInvariant())"
+          $suffix = if ($env:PRERELEASE -eq 'true') { ' release candidate' } else { '' }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "title=MoniTopo $($release.DisplayVersion)$suffix"
       - name: Restore locked dependencies
         run: dotnet restore MoniTopo.slnx --locked-mode
       - name: Restore self-contained runtime packs
@@ -57,15 +65,15 @@ jobs:
         run: dotnet test tests/MoniTopo.App.Tests/MoniTopo.App.Tests.csproj --configuration Release --no-build
       - name: Publish win-x64
         run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish -p:Version=${{ steps.version.outputs.package }}
-      - name: Download previous prerelease assets for deltas
+      - name: Download previous channel assets for deltas
         continue-on-error: true
-        run: dotnet tool run vpk -- download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre true --outputDir artifacts/releases
+        run: dotnet tool run vpk -- download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre ${{ steps.version.outputs.prerelease }} --outputDir artifacts/releases
       - name: Build installer and portable package
         shell: pwsh
         run: ./eng/Pack-Release.ps1 -PackageVersion ${{ steps.version.outputs.package }} -PublishDirectory artifacts/publish -OutputDirectory artifacts/releases
       - uses: actions/upload-artifact@v7
         with:
-          name: MoniTopo-${{ steps.version.outputs.package }}-release-candidate
+          name: MoniTopo-${{ steps.version.outputs.package }}-release
           path: artifacts/releases
-      - name: Create draft prerelease
-        run: dotnet tool run vpk -- upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre true --releaseName "MoniTopo ${{ steps.version.outputs.display }} release candidate" --tag ${{ steps.version.outputs.tag }} --targetCommitish ${{ github.sha }} --outputDir artifacts/releases
+      - name: Create draft release
+        run: dotnet tool run vpk -- upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre ${{ steps.version.outputs.prerelease }} --releaseName "${{ steps.version.outputs.title }}" --tag ${{ steps.version.outputs.tag }} --targetCommitish ${{ github.sha }} --outputDir artifacts/releases

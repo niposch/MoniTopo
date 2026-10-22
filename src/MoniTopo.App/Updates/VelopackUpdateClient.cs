@@ -15,11 +15,13 @@ public sealed class VelopackUpdateClient : IUpdateClient
     private UpdateInfo? _available;
 
     public VelopackUpdateClient()
-        : this(new UpdateManager(new GithubSource(RepositoryUrl, accessToken: null, prerelease: true)))
+        : this(new UpdateManager(CreateUpdateSource()))
     {
     }
 
     internal VelopackUpdateClient(UpdateManager manager) => _manager = manager;
+
+    internal static GithubSource CreateUpdateSource() => new(RepositoryUrl, accessToken: null, prerelease: false);
 
     public bool IsInstalled => _manager.IsInstalled;
 
