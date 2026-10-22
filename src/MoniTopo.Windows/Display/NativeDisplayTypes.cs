@@ -36,6 +36,17 @@ internal readonly record struct NativePoint(int X, int Y);
 internal readonly record struct NativeRegion(uint Width, uint Height);
 
 [StructLayout(LayoutKind.Sequential)]
+internal readonly record struct NativeRect(int Left, int Top, int Right, int Bottom);
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeDesktopImageInfo
+{
+    internal NativePoint PathSourceSize;
+    internal NativeRect DesktopImageRegion;
+    internal NativeRect DesktopImageClip;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeSourceMode
 {
     internal uint Width;
@@ -70,6 +81,9 @@ internal struct NativeModeUnion
 
     [FieldOffset(0)]
     internal NativeSourceMode SourceMode;
+
+    [FieldOffset(0)]
+    internal NativeDesktopImageInfo DesktopImageInfo;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -142,6 +156,18 @@ internal struct NativePathInfo
             TargetInfo.AdapterId,
             TargetInfo.Id,
             out index);
+
+    internal readonly bool HasDesktopModeReference(NativeModeInfo[] modes) =>
+        TargetInfo.DesktopModeInfoIndex != NativeDisplayConfigModeIndexes.InvalidVirtualIndex &&
+        TryResolveTargetModeInfoIndex(modes, out var targetIndex) &&
+        targetIndex == TargetInfo.TargetModeInfoIndex;
+
+    internal readonly bool TryResolveDesktopModeInfoIndex(NativeModeInfo[] modes, out uint index)
+    {
+        index = TargetInfo.DesktopModeInfoIndex;
+        return HasDesktopModeReference(modes) && MatchesMode(
+            modes, index, expectedType: 3, TargetInfo.AdapterId, TargetInfo.Id);
+    }
 
     private readonly bool TryResolveModeInfoIndex(
         NativeModeInfo[] modes,

@@ -18,6 +18,7 @@ public sealed class EdidParserTests
         edid[22] = 34;
         WriteDescriptor(edid, 54, 0xFF, "SERIAL-FAKE");
         WriteDescriptor(edid, 72, 0xFC, "Synthetic 27");
+        CompleteBaseBlock(edid);
 
         var parsed = EdidParser.Parse(edid);
 
@@ -38,6 +39,38 @@ public sealed class EdidParserTests
         Assert.Null(parsed.ManufacturerId);
         Assert.Null(parsed.Serial);
         Assert.Null(parsed.ModeSignature);
+    }
+
+    [Fact]
+    public void InvalidHeaderOrChecksumCannotBecomeStrongIdentityEvidence()
+    {
+        var edid = new byte[128];
+        WriteDescriptor(edid, 54, 0xFF, "WRONG-SERIAL");
+        CompleteBaseBlock(edid);
+        edid[8] ^= 1;
+
+        Assert.Null(EdidParser.Parse(edid).Serial);
+        CompleteBaseBlock(edid);
+        edid[0] = 1;
+        Assert.Null(EdidParser.Parse(edid).Serial);
+    }
+
+    [Fact]
+    public void PlaceholderDescriptorSerialFallsBackToCredibleNumericSerial()
+    {
+        var edid = new byte[128];
+        edid[12] = 42;
+        WriteDescriptor(edid, 54, 0xFF, "0000000000");
+        CompleteBaseBlock(edid);
+
+        Assert.Equal("42", EdidParser.Parse(edid).Serial);
+    }
+
+    private static void CompleteBaseBlock(byte[] edid)
+    {
+        new byte[] { 0, 255, 255, 255, 255, 255, 255, 0 }.CopyTo(edid, 0);
+        edid[127] = 0;
+        edid[127] = unchecked((byte)-edid.Sum(value => value));
     }
 
     private static void WriteDescriptor(byte[] edid, int offset, byte type, string value)

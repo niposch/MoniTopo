@@ -2,7 +2,8 @@ namespace MoniTopo.Core.Models;
 
 public static class DisplayProfileCaptureSchema
 {
-    public const int Current = 3;
+    public const int Current = 4;
+    public const int MinimumActivatable = 3;
 }
 
 [Flags]
@@ -17,7 +18,12 @@ public enum HotkeyModifiers
 
 public sealed record HotkeyBinding(HotkeyModifiers Modifiers, int VirtualKey);
 
-public sealed record IdentityBinding(string DisplayId, string RuntimeIdentityKey);
+public sealed record IdentityBinding(string DisplayId, string RuntimeIdentityKey)
+{
+    // Older bindings only contain a transient address. Keep them readable, but never
+    // use that address alone as evidence of a physical monitor's identity.
+    public MonitorIdentityFingerprint? Identity { get; init; }
+}
 
 public sealed record DisplayProfile(
     Guid Id,

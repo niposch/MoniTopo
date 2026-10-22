@@ -237,10 +237,11 @@ internal sealed class DisplayConfigNativeFacade : IDisplayConfigNativeFacade
 
 public sealed class DisplayCaptureException : Exception
 {
-    public DisplayCaptureException(int nativeErrorCode, string message, string? technicalDetails = null)
+    public DisplayCaptureException(int nativeErrorCode, string message, string? technicalDetails = null, bool isTransient = false)
         : base(message)
     {
         NativeErrorCode = nativeErrorCode;
+        IsTransient = isTransient || nativeErrorCode is 31 or 87 or 122 or 433 or 1167 or 1168;
         TechnicalDetails = technicalDetails ?? (nativeErrorCode == 0
             ? null
             : string.Create(
@@ -255,4 +256,6 @@ public sealed class DisplayCaptureException : Exception
     public int NativeErrorCode { get; }
 
     public string? TechnicalDetails { get; }
+
+    public bool IsTransient { get; }
 }

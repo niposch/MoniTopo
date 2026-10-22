@@ -59,6 +59,178 @@ public sealed class CcdCaptureServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CaptureAsync(source.Token));
     }
 
+    [Fact]
+    public async Task CaptureRetriesActiveTargetRemovalWithoutLeakingDictionaryErrors()
+    {
+        var stable = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        var removing = stable with { Paths = stable.Paths.ToArray() };
+        removing.Paths[0].TargetInfo.TargetAvailable = 0;
+        var native = new FakeDisplayNative { QueryHandler = count => count == 1 ? removing : stable };
+
+        var snapshot = await CreateService(native).CaptureAsync();
+
+        Assert.Equal(2, snapshot.ActivePaths.Count);
+        Assert.Equal(3, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task PermanentlyIncoherentActiveTargetReturnsClassifiedBoundedError()
+    {
+        var removing = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        removing.Paths[0].TargetInfo.TargetAvailable = 0;
+        var native = new FakeDisplayNative { Snapshot = removing };
+
+        var error = await Assert.ThrowsAsync<DisplayCaptureException>(() => CreateService(native).CaptureAsync());
+
+        Assert.True(error.IsTransient);
+        Assert.Equal(3, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task OptionalPreferredModeFailureDoesNotPreventActiveCapture()
+    {
+        var native = new FakeDisplayNative
+        {
+            Snapshot = FakeDisplayNative.WithExtendedDesktop().Snapshot,
+            PreferredModeHandler = _ => throw new DisplayCaptureException(31, "Synthetic optional preferred-mode failure."),
+        };
+
+        var snapshot = await CreateService(native).CaptureAsync();
+
+        Assert.Equal(3, snapshot.ConnectedDisplays.Count);
+        Assert.All(snapshot.ConnectedDisplays, display => Assert.Null(display.Identity.PreferredMode));
+        Assert.All(snapshot.ActivePaths, path => Assert.NotNull(path.TargetSignal));
+    }
+
+    [Fact]
+    public async Task UnavailableInactiveMetadataIsOmittedWithoutBreakingActiveDesktop()
+    {
+        var native = new FakeDisplayNative
+        {
+            Snapshot = FakeDisplayNative.WithExtendedDesktop().Snapshot,
+            TargetNameError = target => target == 2 ? 31 : 0,
+        };
+
+        var snapshot = await CreateService(native).CaptureAsync();
+
+        Assert.Equal(2, snapshot.ConnectedDisplays.Count);
+        Assert.All(snapshot.ConnectedDisplays, display => Assert.True(display.IsActive));
+    }
+
+    [Fact]
+    public async Task TransientActiveMetadataFailureRetriesEntireSnapshot()
+    {
+        var failed = false;
+        var native = new FakeDisplayNative
+        {
+            Snapshot = FakeDisplayNative.WithExtendedDesktop().Snapshot,
+            TargetNameError = target =>
+            {
+                if (target == 0 && !failed)
+                {
+                    failed = true;
+                    return 1167;
+                }
+
+                return 0;
+            },
+        };
+
+        Assert.Equal(2, (await CreateService(native).CaptureAsync()).ActivePaths.Count);
+        Assert.Equal(3, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task CaptureRejectsSnapshotThatChangedDuringMetadataQueries()
+    {
+        var original = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        var changed = original with { Modes = original.Modes.ToArray() };
+        changed.Modes[0].Mode.SourceMode.Width = 1920;
+        var native = new FakeDisplayNative { QueryHandler = count => count == 1 ? original : changed };
+
+        var snapshot = await CreateService(native).CaptureAsync();
+
+        Assert.Equal(1920, snapshot.ActivePaths[0].SourceResolution.Width);
+        Assert.Equal(4, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentHdrChangeRetriesInsteadOfSavingMixedPropertyState()
+    {
+        var native = new FakeDisplayNative
+        {
+            Snapshot = FakeDisplayNative.WithExtendedDesktop().Snapshot,
+            HdrHandler = (count, _) => new NativeHdrState(true, count == 1, false),
+        };
+
+        var snapshot = await CreateService(native).CaptureAsync();
+
+        Assert.All(snapshot.ActivePaths, path => Assert.False(path.HdrEnabled));
+        Assert.Equal(3, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task ModeArrayReorderingDoesNotInvalidateCoherentSnapshot()
+    {
+        var original = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        var reordered = new NativeDisplaySnapshot(original.Paths.ToArray(), original.Modes.Reverse().ToArray());
+        for (var index = 0; index < 2; index++)
+        {
+            reordered.Paths[index].SourceInfo.ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(checked((uint)(3 - index)));
+            reordered.Paths[index].TargetInfo.ModeInfoIndex = NativeDisplayConfigModeIndexes.EncodeVirtual(checked((uint)(1 - index)));
+        }
+
+        var native = new FakeDisplayNative { QueryHandler = count => count == 1 ? original : reordered };
+
+        Assert.Equal(2, (await CreateService(native).CaptureAsync()).ActivePaths.Count);
+        Assert.Equal(2, native.QueryCount);
+    }
+
+    [Fact]
+    public async Task CapturesVirtualDesktopImageAndDynamicRefreshPolicy()
+    {
+        var original = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        var desktop = new NativeModeInfo
+        {
+            InfoType = 3,
+            Id = 0,
+            AdapterId = original.Paths[0].TargetInfo.AdapterId,
+            Mode = new NativeModeUnion
+            {
+                DesktopImageInfo = new NativeDesktopImageInfo
+                {
+                    PathSourceSize = new NativePoint(2560, 1440),
+                    DesktopImageRegion = new NativeRect(0, 0, 2560, 1440),
+                    DesktopImageClip = new NativeRect(0, 0, 2560, 1440),
+                },
+            },
+        };
+        var raw = new NativeDisplaySnapshot(original.Paths.ToArray(), [.. original.Modes, desktop]);
+        raw.Paths[0].Flags |= NativeDisplayConfigPathFlags.SupportVirtualMode | NativeDisplayConfigPathFlags.BoostRefreshRate;
+        raw.Paths[0].TargetInfo.ModeInfoIndex = (2u << 16) | 4u;
+
+        var snapshot = await CreateService(new FakeDisplayNative { Snapshot = raw }).CaptureAsync();
+
+        Assert.True(snapshot.ActivePaths[0].BoostRefreshRate);
+        Assert.False(snapshot.ActivePaths[1].BoostRefreshRate);
+        Assert.Equal(new DisplayDesktopImage(new DisplaySize(2560, 1440), new DisplayRectangle(0, 0, 2560, 1440), new DisplayRectangle(0, 0, 2560, 1440)), snapshot.ActivePaths[0].DesktopImage);
+    }
+
+    [Fact]
+    public async Task IncompletePhysicalSignalIsNeverSaved()
+    {
+        var raw = FakeDisplayNative.WithExtendedDesktop().Snapshot;
+        raw.Modes[2].Mode.TargetMode.TargetVideoSignalInfo.PixelRate = 0;
+
+        var error = await Assert.ThrowsAsync<DisplayCaptureException>(() => CreateService(new FakeDisplayNative { Snapshot = raw }).CaptureAsync());
+
+        Assert.True(error.IsTransient);
+        Assert.Contains("physical signal", error.Message, StringComparison.Ordinal);
+    }
+
+    private static CcdCaptureService CreateService(FakeDisplayNative native) =>
+        new(native, new FakeScaleService(), new FakeIdentityProvider(), new FrozenTimeProvider());
+
     private sealed class FakeScaleService(bool isSupported = true) : IDisplayScaleService
     {
         public DisplayScaleCapability Query(DisplaySourceAddress source) => isSupported
@@ -104,18 +276,40 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
 
     internal NativeHdrState? HdrState { get; init; }
 
-    public NativeDisplaySnapshot Query(uint flags) => Snapshot;
+    internal Func<int, uint, NativeHdrState>? HdrHandler { get; init; }
 
-    public NativeTargetDeviceName GetTargetName(NativeAdapterId adapterId, uint targetId) => new()
+    internal Func<int, NativeDisplaySnapshot>? QueryHandler { get; init; }
+
+    internal Func<uint, int>? TargetNameError { get; init; }
+
+    internal Func<uint, NativeTargetPreferredMode>? PreferredModeHandler { get; init; }
+
+    internal int QueryCount { get; private set; }
+
+    public NativeDisplaySnapshot Query(uint flags)
     {
-        Header = new NativeDeviceInfoHeader { AdapterId = adapterId, Id = targetId },
-        OutputTechnology = 10,
-        ConnectorInstance = targetId,
-    };
+        QueryCount++;
+        return QueryHandler?.Invoke(QueryCount) ?? Snapshot;
+    }
+
+    public NativeTargetDeviceName GetTargetName(NativeAdapterId adapterId, uint targetId)
+    {
+        if (TargetNameError?.Invoke(targetId) is int error && error != 0)
+        {
+            throw new DisplayCaptureException(error, "Synthetic target-name failure.");
+        }
+
+        return new NativeTargetDeviceName
+        {
+            Header = new NativeDeviceInfoHeader { AdapterId = adapterId, Id = targetId },
+            OutputTechnology = 10,
+            ConnectorInstance = targetId,
+        };
+    }
 
     public string GetSourceName(NativeAdapterId adapterId, uint sourceId) => $"SYNTHETIC{sourceId}";
 
-    public NativeTargetPreferredMode GetTargetPreferredMode(NativeAdapterId adapterId, uint targetId) => new()
+    public NativeTargetPreferredMode GetTargetPreferredMode(NativeAdapterId adapterId, uint targetId) => PreferredModeHandler?.Invoke(targetId) ?? new()
     {
         Width = 2560,
         Height = 1440,
@@ -124,7 +318,8 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
     public NativeHdrState GetHdrState(NativeAdapterId adapterId, uint targetId)
     {
         HdrQueryCount++;
-        return HdrState ?? new NativeHdrState(IsSupported: true, IsEnabled: targetId == 0, IsLimitedByPolicy: false);
+        return HdrHandler?.Invoke(HdrQueryCount, targetId) ?? HdrState ??
+            new NativeHdrState(IsSupported: true, IsEnabled: targetId == 0, IsLimitedByPolicy: false);
     }
 
     public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId)

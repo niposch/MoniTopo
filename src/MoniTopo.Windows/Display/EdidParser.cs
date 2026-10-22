@@ -18,7 +18,9 @@ internal static class EdidParser
 
     internal static ParsedEdid Parse(byte[]? edid)
     {
-        if (edid is null || edid.Length < MinimumEdidLength)
+        if (edid is null || edid.Length < MinimumEdidLength ||
+            !edid.AsSpan(0, 8).SequenceEqual((ReadOnlySpan<byte>)[0, 255, 255, 255, 255, 255, 255, 0]) ||
+            edid.Take(MinimumEdidLength).Sum(value => value) % 256 != 0)
         {
             return new ParsedEdid(null, null, null, null, null, null, null);
         }
@@ -26,7 +28,7 @@ internal static class EdidParser
         var manufacturer = DecodeManufacturer(edid[8], edid[9]);
         var productCode = edid[10] | (edid[11] << 8);
         var numericSerial = BitConverter.ToUInt32(edid, 12);
-        var descriptorSerial = ReadDescriptor(edid, 0xFF);
+        var descriptorSerial = NormalizeSerial(ReadDescriptor(edid, 0xFF));
         var serial = descriptorSerial ?? (numericSerial is 0 or uint.MaxValue ? null : numericSerial.ToString(System.Globalization.CultureInfo.InvariantCulture));
         var model = ReadDescriptor(edid, 0xFC);
         int? width = edid[21] == 0 ? null : edid[21] * 10;
@@ -35,7 +37,7 @@ internal static class EdidParser
         return new ParsedEdid(manufacturer, productCode, serial, model, width, height, signature);
     }
 
-    private static string? DecodeManufacturer(byte high, byte low)
+    internal static string? DecodeManufacturer(byte high, byte low)
     {
         var value = (high << 8) | low;
         Span<char> characters = stackalloc char[3];
@@ -46,6 +48,13 @@ internal static class EdidParser
     }
 
     private static char DecodeLetter(int value) => value is >= 1 and <= 26 ? (char)('A' + value - 1) : '?';
+
+    private static string? NormalizeSerial(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value.All(character => character is '0' or ' ') ||
+        value.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("n/a", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? null : value;
 
     private static string? ReadDescriptor(byte[] edid, byte descriptorType)
     {

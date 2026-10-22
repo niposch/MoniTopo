@@ -24,6 +24,11 @@ public static class ProfileNormalizer
                 RefreshRate = display.RefreshRate.Normalize(),
                 FriendlyLabel = display.FriendlyLabel.Trim(),
                 Identity = NormalizeIdentity(display.Identity),
+                TargetSignal = display.TargetSignal is { } signal ? signal with
+                {
+                    HorizontalSyncFrequency = signal.HorizontalSyncFrequency.Normalize(),
+                    VerticalSyncFrequency = signal.VerticalSyncFrequency.Normalize(),
+                } : null,
             })
             .ToArray();
 
@@ -37,6 +42,7 @@ public static class ProfileNormalizer
                 {
                     DisplayId = binding.DisplayId.Trim(),
                     RuntimeIdentityKey = binding.RuntimeIdentityKey.Trim(),
+                    Identity = binding.Identity is { } identity ? NormalizeIdentity(identity) : null,
                 })
                 .ToArray(),
         };

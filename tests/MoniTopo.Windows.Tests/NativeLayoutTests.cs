@@ -13,6 +13,8 @@ public sealed class NativeLayoutTests
         Assert.Equal(48, Marshal.SizeOf<NativePathTargetInfo>());
         Assert.Equal(72, Marshal.SizeOf<NativePathInfo>());
         Assert.Equal(64, Marshal.SizeOf<NativeModeInfo>());
+        Assert.Equal(40, Marshal.SizeOf<NativeDesktopImageInfo>());
+        Assert.Equal(16, Marshal.SizeOf<NativeRect>());
         Assert.Equal(20, Marshal.SizeOf<NativeDeviceInfoHeader>());
         Assert.Equal(420, Marshal.SizeOf<NativeTargetDeviceName>());
         Assert.Equal(80, Marshal.SizeOf<NativeTargetPreferredMode>());
@@ -31,6 +33,8 @@ public sealed class NativeLayoutTests
         Assert.Equal(12, Marshal.OffsetOf<NativePathSourceInfo>(nameof(NativePathSourceInfo.ModeInfoIndex)).ToInt32());
         Assert.Equal(28, Marshal.OffsetOf<NativePathTargetInfo>(nameof(NativePathTargetInfo.RefreshRate)).ToInt32());
         Assert.Equal(68, Marshal.OffsetOf<NativePathInfo>(nameof(NativePathInfo.Flags)).ToInt32());
+        Assert.Equal(8, Marshal.OffsetOf<NativeDesktopImageInfo>(nameof(NativeDesktopImageInfo.DesktopImageRegion)).ToInt32());
+        Assert.Equal(24, Marshal.OffsetOf<NativeDesktopImageInfo>(nameof(NativeDesktopImageInfo.DesktopImageClip)).ToInt32());
     }
 
     [Fact]
@@ -83,5 +87,29 @@ public sealed class NativeLayoutTests
         Assert.Equal(0u, directTarget);
         Assert.Equal(1u, packedSource);
         Assert.Equal(0u, packedTarget);
+    }
+
+    [Fact]
+    public void DesktopImageIndexRequiresCorrectTypeAdapterAndEndpoint()
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var modes = new[]
+        {
+            new NativeModeInfo { InfoType = 2, AdapterId = adapter, Id = 2 },
+            new NativeModeInfo { InfoType = 3, AdapterId = adapter, Id = 2 },
+        };
+        var path = new NativePathInfo
+        {
+            TargetInfo = new NativePathTargetInfo { AdapterId = adapter, Id = 2, ModeInfoIndex = 1 },
+            Flags = NativeDisplayConfigPathFlags.SupportVirtualMode,
+        };
+
+        Assert.True(path.TryResolveDesktopModeInfoIndex(modes, out var desktop));
+        Assert.Equal(1u, desktop);
+        modes[1].Id = 3;
+        Assert.False(path.TryResolveDesktopModeInfoIndex(modes, out _));
+        modes[1].Id = 2;
+        modes[1].AdapterId = new NativeAdapterId(2, 0);
+        Assert.False(path.TryResolveDesktopModeInfoIndex(modes, out _));
     }
 }

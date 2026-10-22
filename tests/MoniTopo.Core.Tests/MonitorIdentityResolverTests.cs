@@ -122,15 +122,93 @@ public sealed class MonitorIdentityResolverTests
         {
             LastSuccessfulIdentityBindings =
             [
-                new IdentityBinding("a", "two"),
-                new IdentityBinding("b", "one"),
+                new IdentityBinding("a", "two") { Identity = identity with { MonitorDevicePath = "synthetic://two" } },
+                new IdentityBinding("b", "one") { Identity = identity with { MonitorDevicePath = "synthetic://one" } },
             ],
         };
 
-        var result = _resolver.Resolve(profile, [Connected("one", identity), Connected("two", identity)]);
+        var result = _resolver.Resolve(profile,
+        [
+            Connected("one", identity with { MonitorDevicePath = "synthetic://one" }),
+            Connected("two", identity with { MonitorDevicePath = "synthetic://two" }),
+        ]);
 
         Assert.Equal(IdentityResolutionStatus.Success, result.Status);
         Assert.Equal("two", result.Bindings.Single(binding => binding.DisplayId == "a").RuntimeId);
+    }
+
+    [Fact]
+    public void LegacyRuntimeBindingCannotOverrideConflictingPhysicalSerial()
+    {
+        var profile = TestData.Profile() with
+        {
+            LastSuccessfulIdentityBindings = [new IdentityBinding("display-1", "reused-runtime")],
+        };
+        var wrongPanel = profile.Displays[0].Identity with { EdidSerial = "DIFFERENT-PANEL" };
+
+        var result = _resolver.Resolve(profile, [Connected("reused-runtime", wrongPanel)]);
+
+        Assert.Equal(IdentityResolutionStatus.Missing, result.Status);
+        Assert.False(MonitorIdentityResolver.Score(profile.Displays[0].Identity, wrongPanel, rememberedBinding: true).MeetsThreshold);
+    }
+
+    [Fact]
+    public void DurableBindingFollowsPanelWhenRuntimeAddressChanges()
+    {
+        var profile = TestData.Profile();
+        var identity = profile.Displays[0].Identity;
+        profile = profile with
+        {
+            LastSuccessfulIdentityBindings = [new IdentityBinding("display-1", "old-runtime") { Identity = identity }],
+        };
+
+        var result = _resolver.Resolve(profile, [Connected("new-runtime", identity)]);
+
+        Assert.Equal(IdentityResolutionStatus.Success, result.Status);
+        Assert.Equal("new-runtime", Assert.Single(result.Bindings).RuntimeId);
+    }
+
+    [Fact]
+    public void ExplicitReplacementBindingUsesNewPhysicalBaseline()
+    {
+        var profile = TestData.Profile();
+        var replacement = TestData.Identity("REPLACEMENT");
+        profile = profile with
+        {
+            LastSuccessfulIdentityBindings = [new IdentityBinding("display-1", "selected") { Identity = replacement }],
+        };
+
+        Assert.Equal(IdentityResolutionStatus.Success, _resolver.Resolve(profile, [Connected("changed", replacement)]).Status);
+        Assert.Equal(IdentityResolutionStatus.Missing, _resolver.Resolve(profile, [Connected("selected", profile.Displays[0].Identity)]).Status);
+    }
+
+    [Fact]
+    public void LegacyRuntimeBindingDoesNotResolveIndistinguishablePanels()
+    {
+        var identity = TestData.Identity() with
+        {
+            MonitorDevicePath = null,
+            DeviceInstanceId = null,
+            EdidSerial = null,
+            ConnectorInstance = null,
+        };
+        var profile = TestData.Profile(displays: [TestData.Display() with { Identity = identity }]) with
+        {
+            LastSuccessfulIdentityBindings = [new IdentityBinding("display-1", "one")],
+        };
+
+        Assert.Equal(IdentityResolutionStatus.Ambiguous,
+            _resolver.Resolve(profile, [Connected("one", identity), Connected("two", identity)]).Status);
+    }
+
+    [Fact]
+    public void ContainerConflictCannotBeOutweighedByPortOrModelSignals()
+    {
+        var saved = TestData.Identity() with { DeviceContainerId = "container-a", EdidSerial = null };
+        var other = saved with { DeviceContainerId = "container-b" };
+
+        Assert.False(MonitorIdentityResolver.Score(saved, other, rememberedBinding: true).MeetsThreshold);
+        Assert.True(MonitorIdentityResolver.Score(saved with { EdidSerial = "stable" }, other with { EdidSerial = "stable" }).MeetsThreshold);
     }
 
     [Fact]

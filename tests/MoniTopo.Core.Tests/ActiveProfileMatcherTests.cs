@@ -74,6 +74,98 @@ public sealed class ActiveProfileMatcherTests
         Assert.True(_matcher.Match(profile, snapshot).IsMatch);
     }
 
+    [Theory]
+    [InlineData("active-size")]
+    [InlineData("total-size")]
+    [InlineData("pixel-clock")]
+    [InlineData("horizontal-sync")]
+    [InlineData("vertical-sync")]
+    [InlineData("scanline")]
+    [InlineData("vsync-divider")]
+    [InlineData("missing")]
+    public void PhysicalSignalChangesCannotPassCompleteVerification(string changedProperty)
+    {
+        var signal = Signal();
+        var profile = TestData.Profile(displays: [TestData.Display() with { TargetSignal = signal }]);
+        DisplayTargetSignal? changed = changedProperty switch
+        {
+            "active-size" => signal with { ActiveSize = new DisplaySize(1920, 1080) },
+            "total-size" => signal with { TotalSize = new DisplaySize(2800, 1500) },
+            "pixel-clock" => signal with { PixelRate = 300_000_000 },
+            "horizontal-sync" => signal with { HorizontalSyncFrequency = new RefreshRate(90_000, 1) },
+            "vertical-sync" => signal with { VerticalSyncFrequency = new RefreshRate(75, 1) },
+            "scanline" => signal with { ScanLineOrdering = 2 },
+            "vsync-divider" => signal with { VideoStandard = 2u << 16 },
+            _ => null,
+        };
+
+        var result = _matcher.Match(profile, Snapshot(profile, mutate: path => path with { TargetSignal = changed }));
+
+        Assert.False(result.IsMatch);
+        Assert.Equal("target-signal", result.MismatchCode);
+    }
+
+    [Fact]
+    public void EquivalentSignalRationalsAndDriverLabelsDoNotProduceCustom()
+    {
+        var signal = Signal();
+        var profile = TestData.Profile(displays: [TestData.Display() with { TargetSignal = signal }]);
+        var equivalent = signal with
+        {
+            PixelRate = signal.PixelRate + 10,
+            HorizontalSyncFrequency = new RefreshRate(88_787_000, 1000),
+            VerticalSyncFrequency = new RefreshRate(60_000, 1000),
+            VideoStandard = 255 | 0xFFC00000u,
+        };
+
+        Assert.True(_matcher.Match(profile, Snapshot(profile, mutate: path => path with { TargetSignal = equivalent })).IsMatch);
+    }
+
+    [Fact]
+    public void ConsistentFractionalAndRoundedPhysicalClocksRemainEquivalent()
+    {
+        var signal = Signal();
+        var profile = TestData.Profile(displays: [TestData.Display() with { TargetSignal = signal }]);
+        var fractional = signal with
+        {
+            PixelRate = signal.PixelRate * 1000 / 1001,
+            HorizontalSyncFrequency = new RefreshRate(88_787_000, 1001),
+            VerticalSyncFrequency = new RefreshRate(60_000, 1001),
+        };
+
+        Assert.True(_matcher.Match(profile, Snapshot(profile, mutate: path => path with { TargetSignal = fractional })).IsMatch);
+        Assert.False(signal.IsEquivalentTo(fractional with { PixelRate = signal.PixelRate * 99 / 100 }));
+    }
+
+    [Fact]
+    public void SavedVirtualImageAndRefreshBoostAreVerified()
+    {
+        var image = new DisplayDesktopImage(new DisplaySize(2560, 1440), new DisplayRectangle(0, 0, 2560, 1440), new DisplayRectangle(0, 0, 2560, 1440));
+        var profile = TestData.Profile(displays: [TestData.Display() with { TargetSignal = Signal(), DesktopImage = image, BoostRefreshRate = true }]) with
+        {
+            CaptureSchemaVersion = DisplayProfileCaptureSchema.Current,
+        };
+
+        Assert.True(_matcher.Match(profile, Snapshot(profile)).IsMatch);
+        Assert.Equal("virtual-mode", _matcher.Match(profile, Snapshot(profile, mutate: path => path with { BoostRefreshRate = false })).MismatchCode);
+        Assert.Equal("virtual-mode", _matcher.Match(profile, Snapshot(profile, mutate: path => path with { DesktopImage = image with { Clip = new DisplayRectangle(0, 0, 1920, 1080) } })).MismatchCode);
+    }
+
+    [Fact]
+    public void LegacyUnknownVirtualMetadataRemainsUsableButCurrentCaptureMustBeComplete()
+    {
+        var legacy = TestData.Profile() with { CaptureSchemaVersion = 3 };
+        var current = Snapshot(legacy, mutate: path => path with
+        {
+            TargetSignal = Signal(),
+            BoostRefreshRate = false,
+            DesktopImage = new DisplayDesktopImage(new DisplaySize(2560, 1440), new DisplayRectangle(0, 0, 2560, 1440), new DisplayRectangle(0, 0, 2560, 1440)),
+        });
+
+        Assert.True(_matcher.Match(legacy, current).IsMatch);
+        Assert.False(_matcher.Match(legacy with { CaptureSchemaVersion = DisplayProfileCaptureSchema.Current }, current).IsMatch);
+    }
+
     [Fact]
     public void PrimaryMismatchProducesCustom()
     {
@@ -146,4 +238,8 @@ public sealed class ActiveProfileMatcherTests
             profile.PrimaryDisplayId,
             DateTimeOffset.UtcNow);
     }
+
+    private static DisplayTargetSignal Signal() => new(
+        241_500_000, new RefreshRate(88_787, 1), new RefreshRate(60, 1),
+        new DisplaySize(2560, 1440), new DisplaySize(2720, 1481), 0, 1);
 }

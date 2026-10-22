@@ -25,7 +25,17 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
 
     public MonitorIdentityFingerprint Resolve(NativeTargetDeviceName targetName, DisplaySize? preferredMode)
     {
-        var setupIdentity = FindSetupIdentity(targetName.DevicePath);
+        (string? DeviceInstanceId, string? DeviceContainerId, byte[]? Edid) setupIdentity;
+        try
+        {
+            setupIdentity = FindSetupIdentity(targetName.DevicePath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // SetupAPI/registry data improves identity but is optional. The CCD
+            // monitor path and model information still participate in resolution.
+            setupIdentity = default;
+        }
         var parsedEdid = EdidParser.Parse(setupIdentity.Edid);
         return new MonitorIdentityFingerprint(
             MonitorDevicePath: EmptyToNull(targetName.DevicePath),
@@ -84,6 +94,11 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
                     0,
                     out var requiredSize,
                     ref deviceInfo);
+                if (requiredSize < 6 || requiredSize > 1024 * 1024)
+                {
+                    continue;
+                }
+
                 var detailBuffer = Marshal.AllocHGlobal(checked((int)requiredSize));
                 try
                 {
@@ -146,7 +161,13 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
                 checked((uint)buffer.Length),
                 out var requiredSize,
                 flags: 0);
-            return success && requiredSize == 16 ? new Guid(buffer).ToString("D") : null;
+            if (!success || requiredSize != 16)
+            {
+                return null;
+            }
+
+            var id = new Guid(buffer);
+            return id != Guid.Empty ? id.ToString("D") : null;
         }
     }
 
@@ -169,16 +190,8 @@ internal sealed class SetupApiMonitorIdentityProvider : IMonitorIdentityProvider
         return key.GetValue("EDID") as byte[];
     }
 
-    private static string? DecodeCcdManufacturer(ushort rawValue)
-    {
-        var parsed = EdidParser.Parse(
-        [
-            0, 0, 0, 0, 0, 0, 0, 0,
-            (byte)(rawValue >> 8), (byte)rawValue,
-            .. new byte[118],
-        ]);
-        return parsed.ManufacturerId;
-    }
+    private static string? DecodeCcdManufacturer(ushort rawValue) =>
+        EdidParser.DecodeManufacturer((byte)(rawValue >> 8), (byte)rawValue);
 
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }

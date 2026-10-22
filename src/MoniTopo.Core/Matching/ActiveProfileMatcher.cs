@@ -61,6 +61,20 @@ public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolve
             {
                 return new ProfileMatchResult(false, "display-state", resolution);
             }
+
+            if ((saved.TargetSignal is { } savedSignal &&
+                (currentPath.TargetSignal is not { } currentSignal || !savedSignal.IsEquivalentTo(currentSignal))) ||
+                (profile.CaptureSchemaVersion >= 4 && saved.TargetSignal is null))
+            {
+                return new ProfileMatchResult(false, "target-signal", resolution);
+            }
+
+            if (((profile.CaptureSchemaVersion >= 4 || saved.DesktopImage is not null) &&
+                saved.DesktopImage != currentPath.DesktopImage) ||
+                (saved.BoostRefreshRate is bool boost && currentPath.BoostRefreshRate != boost))
+            {
+                return new ProfileMatchResult(false, "virtual-mode", resolution);
+            }
         }
 
         for (var left = 0; left < profile.Displays.Count; left++)

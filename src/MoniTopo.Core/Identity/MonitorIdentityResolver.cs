@@ -46,20 +46,24 @@ public sealed class MonitorIdentityResolver
     {
         var score = 0;
         var signals = new List<string>();
-        if (Conflicts(saved.DeviceContainerId, candidate.DeviceContainerId))
+        var savedSerial = CredibleSerial(saved.EdidSerial);
+        var candidateSerial = CredibleSerial(candidate.EdidSerial);
+        if (Conflicts(savedSerial, candidateSerial) ||
+            Conflicts(saved.DeviceContainerId, candidate.DeviceContainerId) && !Equal(savedSerial, candidateSerial) ||
+            Conflicts(saved.EdidManufacturerId, candidate.EdidManufacturerId) ||
+            Equal(saved.EdidManufacturerId, candidate.EdidManufacturerId) &&
+            saved.EdidProductCode is > 0 && candidate.EdidProductCode is > 0 &&
+            saved.EdidProductCode != candidate.EdidProductCode)
         {
-            score -= 200;
-        }
-
-        if (Conflicts(saved.EdidSerial, candidate.EdidSerial))
-        {
-            score -= 200;
+            // A reused port/address must not outweigh evidence of a different
+            // physical panel. An explicit new binding can establish a new baseline.
+            return new IdentityScore(InvalidScore, ["conflicting physical identity"]);
         }
 
         AddMatch(saved.MonitorDevicePath, candidate.MonitorDevicePath, 110, "monitor device path", ref score, signals);
         AddMatch(saved.DeviceInstanceId, candidate.DeviceInstanceId, 100, "device instance", ref score, signals);
         AddMatch(saved.DeviceContainerId, candidate.DeviceContainerId, 105, "device container", ref score, signals);
-        AddMatch(saved.EdidSerial, candidate.EdidSerial, 95, "EDID serial", ref score, signals);
+        AddMatch(savedSerial, candidateSerial, 95, "EDID serial", ref score, signals);
 
         if (Equal(saved.EdidManufacturerId, candidate.EdidManufacturerId) && saved.EdidProductCode == candidate.EdidProductCode)
         {
@@ -117,14 +121,15 @@ public sealed class MonitorIdentityResolver
         for (var row = 0; row < profile.Displays.Count; row++)
         {
             var savedDisplay = profile.Displays[row];
-            var rememberedRuntimeId = profile.LastSuccessfulIdentityBindings
+            var rememberedBinding = profile.LastSuccessfulIdentityBindings
                 .FirstOrDefault(binding => string.Equals(binding.DisplayId, savedDisplay.DisplayId, StringComparison.OrdinalIgnoreCase))
-                ?.RuntimeIdentityKey;
+                ?.Identity;
             for (var column = 0; column < orderedCandidates.Length; column++)
             {
                 var candidate = orderedCandidates[column];
-                var remembered = string.Equals(rememberedRuntimeId, candidate.RuntimeId, StringComparison.Ordinal);
-                var candidateScore = Score(savedDisplay.Identity, candidate.Identity, remembered).Score;
+                var identity = rememberedBinding ?? savedDisplay.Identity;
+                var remembered = rememberedBinding is not null && HasBindingAnchor(rememberedBinding, candidate.Identity);
+                var candidateScore = Score(identity, candidate.Identity, remembered).Score;
                 weights[row, column] = candidateScore >= MinimumScore ? candidateScore : InvalidScore;
             }
 
@@ -300,6 +305,29 @@ public sealed class MonitorIdentityResolver
         !string.IsNullOrWhiteSpace(left) &&
         !string.IsNullOrWhiteSpace(right) &&
         !string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasBindingAnchor(MonitorIdentityFingerprint saved, MonitorIdentityFingerprint candidate) =>
+        Equal(saved.MonitorDevicePath, candidate.MonitorDevicePath) ||
+        Equal(saved.DeviceInstanceId, candidate.DeviceInstanceId) ||
+        Equal(saved.DeviceContainerId, candidate.DeviceContainerId) ||
+        Equal(CredibleSerial(saved.EdidSerial), CredibleSerial(candidate.EdidSerial)) ||
+        saved.OutputTechnology != DisplayOutputTechnology.Unknown &&
+        saved.OutputTechnology == candidate.OutputTechnology &&
+        saved.ConnectorInstance is uint connector && candidate.ConnectorInstance == connector &&
+        Equal(saved.EdidManufacturerId, candidate.EdidManufacturerId) &&
+        saved.EdidProductCode is > 0 && saved.EdidProductCode == candidate.EdidProductCode;
+
+    private static string? CredibleSerial(string? serial)
+    {
+        var value = serial?.Trim();
+        return string.IsNullOrEmpty(value) || value.All(character => character is '0' or '-' or ' ') ||
+            value.All(character => character is 'F' or 'f' or '-' or ' ') ||
+            value.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("n/a", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("serial number", StringComparison.OrdinalIgnoreCase)
+            ? null : value;
+    }
 
     private sealed record Assignment(int[] Columns, int TotalScore);
 }

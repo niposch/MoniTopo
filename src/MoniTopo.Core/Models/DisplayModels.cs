@@ -11,6 +11,21 @@ public readonly record struct DisplaySize(int Width, int Height)
     public bool IsValid => Width > 0 && Height > 0;
 }
 
+public readonly record struct DisplayRectangle(int Left, int Top, int Right, int Bottom)
+{
+    public bool IsValid => Right > Left && Bottom > Top;
+}
+
+public sealed record DisplayDesktopImage(
+    DisplaySize PathSourceSize,
+    DisplayRectangle Region,
+    DisplayRectangle Clip)
+{
+    public bool IsValid => PathSourceSize.IsValid && Region.IsValid && Clip.IsValid &&
+        Region.Left >= 0 && Region.Top >= 0 &&
+        Region.Right <= PathSourceSize.Width && Region.Bottom <= PathSourceSize.Height;
+}
+
 public readonly record struct RefreshRate(long Numerator, long Denominator)
 {
     public double Hertz => Denominator == 0 ? 0 : (double)Numerator / Denominator;
@@ -81,7 +96,44 @@ public sealed record DisplayTargetSignal(
     DisplaySize ActiveSize,
     DisplaySize TotalSize,
     uint VideoStandard,
-    uint ScanLineOrdering);
+    uint ScanLineOrdering)
+{
+    private const double RefreshToleranceHertz = 0.1;
+    private const double ClockRoundingTolerance = 0.0001;
+    private const double MaximumRelativeClockTolerance = 0.002;
+
+    public bool IsValid => PixelRate > 0 && HorizontalSyncFrequency.IsValid &&
+        VerticalSyncFrequency.IsValid && ActiveSize.IsValid && TotalSize.IsValid &&
+        TotalSize.Width >= ActiveSize.Width && TotalSize.Height >= ActiveSize.Height &&
+        ScanLineOrdering <= 3;
+
+    public bool IsEquivalentTo(DisplayTargetSignal other)
+    {
+        if (!IsValid || !other.IsValid ||
+            ActiveSize != other.ActiveSize || TotalSize != other.TotalSize ||
+            ScanLineOrdering != other.ScanLineOrdering ||
+            // The low 16 bits are a driver-provided timing-standard label and the
+            // high 10 bits are reserved. Only the Miracast divider affects semantics.
+            (VideoStandard & 0x003F0000u) != (other.VideoStandard & 0x003F0000u) ||
+            !VerticalSyncFrequency.IsEquivalentTo(other.VerticalSyncFrequency, RefreshToleranceHertz))
+        {
+            return false;
+        }
+
+        // Windows can alternate a common rate's fractional and rounded forms.
+        // Admit consistent clock differences implied by that rate representation,
+        // plus 0.01% rounding, but never more than 0.2% for a physical clock.
+        var relativeRefreshDifference = Math.Abs(VerticalSyncFrequency.Hertz - other.VerticalSyncFrequency.Hertz) /
+            Math.Max(VerticalSyncFrequency.Hertz, other.VerticalSyncFrequency.Hertz);
+        var clockTolerance = Math.Min(MaximumRelativeClockTolerance, relativeRefreshDifference + ClockRoundingTolerance);
+        return CloseClock(PixelRate, other.PixelRate, clockTolerance) &&
+            CloseClock(HorizontalSyncFrequency.Hertz, other.HorizontalSyncFrequency.Hertz, clockTolerance);
+    }
+
+    // Permit rounding of a reported clock, not a different physical timing mode.
+    private static bool CloseClock(double left, double right, double relativeTolerance) =>
+        Math.Abs(left - right) <= Math.Max(1e-6, Math.Max(left, right) * relativeTolerance);
+}
 
 public sealed record MonitorIdentityFingerprint(
     string? MonitorDevicePath,
@@ -125,6 +177,11 @@ public sealed record DesiredDisplayPath(
     string FriendlyLabel)
 {
     public DisplayTargetSignal? TargetSignal { get; init; }
+
+    public DisplayDesktopImage? DesktopImage { get; init; }
+
+    // Null means a legacy capture did not record dynamic refresh-rate policy.
+    public bool? BoostRefreshRate { get; init; }
 }
 
 public sealed record ConnectedDisplayState(

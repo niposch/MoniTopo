@@ -13,9 +13,10 @@ internal static class DisplayConfigurationPlanBuilder
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
         NativeDisplaySnapshot availableConfiguration,
-        bool forceVirtualModeIndexes = false)
+        bool forceVirtualModeIndexes = false,
+        int sourceRoutingIndex = 0)
     {
-        if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.Current)
+        if (profile.CaptureSchemaVersion < DisplayProfileCaptureSchema.MinimumActivatable)
         {
             throw new ActivationFailureException(
                 "activation.profile.capture-outdated",
@@ -34,7 +35,7 @@ internal static class DisplayConfigurationPlanBuilder
             .ThenBy(group => group.Key, StringComparer.Ordinal)
             .Select(group => CreateSourceGroup(group, bindingByDisplay, targetPaths))
             .ToArray();
-        var sourceAssignments = AssignUniqueSources(groups);
+        var sourceAssignments = AssignUniqueSources(groups, sourceRoutingIndex);
 
         var modes = new List<NativeModeInfo>(groups.Length + profile.Displays.Count);
         var sourceModeIndexes = new Dictionary<string, uint>(StringComparer.Ordinal);
@@ -102,7 +103,28 @@ internal static class DisplayConfigurationPlanBuilder
             });
 
             var sourceModeIndex = sourceModeIndexes[display.SourceGroupId];
-            var useVirtualModeIndexes = forceVirtualModeIndexes || availablePath.SupportsVirtualMode;
+            var useVirtualModeIndexes = forceVirtualModeIndexes || availablePath.SupportsVirtualMode || display.DesktopImage is not null;
+            var desktopModeIndex = NativeDisplayConfigModeIndexes.InvalidVirtualIndex;
+            if (display.DesktopImage is { } desktop)
+            {
+                desktopModeIndex = checked((uint)modes.Count);
+                modes.Add(new NativeModeInfo
+                {
+                    InfoType = 3,
+                    Id = availablePath.TargetInfo.Id,
+                    AdapterId = availablePath.TargetInfo.AdapterId,
+                    Mode = new NativeModeUnion
+                    {
+                        DesktopImageInfo = new NativeDesktopImageInfo
+                        {
+                            PathSourceSize = new NativePoint(desktop.PathSourceSize.Width, desktop.PathSourceSize.Height),
+                            DesktopImageRegion = new NativeRect(desktop.Region.Left, desktop.Region.Top, desktop.Region.Right, desktop.Region.Bottom),
+                            DesktopImageClip = new NativeRect(desktop.Clip.Left, desktop.Clip.Top, desktop.Clip.Right, desktop.Clip.Bottom),
+                        },
+                    },
+                });
+            }
+
             paths.Add(new NativePathInfo
             {
                 SourceInfo = new NativePathSourceInfo
@@ -118,7 +140,7 @@ internal static class DisplayConfigurationPlanBuilder
                     AdapterId = availablePath.TargetInfo.AdapterId,
                     Id = availablePath.TargetInfo.Id,
                     ModeInfoIndex = useVirtualModeIndexes
-                        ? NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex)
+                        ? (NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex) & 0xFFFF0000u) | desktopModeIndex
                         : targetModeIndex,
                     OutputTechnology = availablePath.TargetInfo.OutputTechnology,
                     Rotation = ToNative(display.Orientation),
@@ -128,9 +150,9 @@ internal static class DisplayConfigurationPlanBuilder
                     TargetAvailable = 1,
                 },
                 Flags = NativeDisplayConfigPathFlags.Active |
-                    (availablePath.Flags &
-                        (NativeDisplayConfigPathFlags.SupportVirtualMode |
-                         NativeDisplayConfigPathFlags.BoostRefreshRate)),
+                    (availablePath.Flags & NativeDisplayConfigPathFlags.SupportVirtualMode) |
+                    ((display.BoostRefreshRate ?? (availablePath.Flags & NativeDisplayConfigPathFlags.BoostRefreshRate) != 0)
+                        ? NativeDisplayConfigPathFlags.BoostRefreshRate : 0),
             });
         }
 
@@ -192,10 +214,11 @@ internal static class DisplayConfigurationPlanBuilder
         return new SourceGroup(displayGroup.Key, displays, candidates);
     }
 
-    private static Dictionary<string, NativePathSourceInfo> AssignUniqueSources(SourceGroup[] groups)
+    private static Dictionary<string, NativePathSourceInfo> AssignUniqueSources(SourceGroup[] groups, int routingIndex)
     {
         var assignments = new Dictionary<string, NativePathSourceInfo>(StringComparer.Ordinal);
         var used = new HashSet<string>(StringComparer.Ordinal);
+        var visited = 0;
         if (!Assign(0))
         {
             throw new ActivationFailureException(
@@ -207,9 +230,14 @@ internal static class DisplayConfigurationPlanBuilder
 
         bool Assign(int index)
         {
+            if (++visited > 4096)
+            {
+                return false;
+            }
+
             if (index == groups.Length)
             {
-                return true;
+                return routingIndex-- == 0;
             }
 
             var group = groups[index];
@@ -240,8 +268,7 @@ internal static class DisplayConfigurationPlanBuilder
         var first = displays[0];
         if (displays.Skip(1).Any(display =>
                 display.SourceResolution != first.SourceResolution ||
-                display.Position != first.Position ||
-                display.Orientation != first.Orientation))
+                display.Position != first.Position))
         {
             throw new ActivationFailureException(
                 "activation.profile.clone-invalid",
