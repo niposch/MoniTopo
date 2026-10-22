@@ -60,7 +60,7 @@ public sealed class WindowStartupSmokeTests
             window.ViewModel.SelectedIndex = 0;
             window.ViewModel.ApplyUpdateState(new UpdateState(
                 UpdateStatus.Available,
-                new AvailableUpdate("2026.721.0", "21.07.26", null),
+                new AvailableUpdate("2026.721.0", "2026.07.21", null),
                 0,
                 "Available"));
             var mainRequested = false;
@@ -109,7 +109,7 @@ public sealed class WindowStartupSmokeTests
             window.ViewModel.Profiles.Add(new PopupProfileItem(Guid.NewGuid(), "Movie", 1, "", false));
             window.ViewModel.SelectedIndex = 0;
             window.ViewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Available,
-                new AvailableUpdate("2026.721.0", "21.07.26", null), 0, "Available"));
+                new AvailableUpdate("2026.721.0", "2026.07.21", null), 0, "Available"));
             var activations = 0;
             var opens = 0;
             var updates = 0;

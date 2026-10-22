@@ -26,8 +26,8 @@ public readonly record struct ReleaseVersion : IComparable<ReleaseVersion>
         $"{Date.Year}.{Date.Month}{Date.Day:00}.{Revision}");
 
     public string DisplayVersion => Revision == 0
-        ? Date.ToString("dd.MM.yy", CultureInfo.InvariantCulture)
-        : string.Create(CultureInfo.InvariantCulture, $"{Date:dd.MM.yy}.{Revision}");
+        ? Date.ToString("yyyy.MM.dd", CultureInfo.InvariantCulture)
+        : string.Create(CultureInfo.InvariantCulture, $"{Date:yyyy.MM.dd}.{Revision}");
 
     public int CompareTo(ReleaseVersion other)
     {

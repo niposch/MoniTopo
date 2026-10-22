@@ -74,15 +74,15 @@ public sealed class PopupViewModelTests
     [Fact]
     public void UpdateActionMovesFromDownloadToProgressToRestart()
     {
-        var update = new AvailableUpdate("2026.721.0", "21.07.26", null);
-        var viewModel = new PopupViewModel("20.07.26");
+        var update = new AvailableUpdate("2026.721.0", "2026.07.21", null);
+        var viewModel = new PopupViewModel("2026.07.20");
 
         viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Available, update, 0, "Available"));
 
         Assert.True(viewModel.ShowUpdateAction);
         Assert.True(viewModel.CanRunUpdateAction);
         Assert.Contains("Download update", viewModel.UpdateActionText, StringComparison.Ordinal);
-        Assert.Equal("20.07.26", viewModel.VersionText);
+        Assert.Equal("2026.07.20", viewModel.VersionText);
 
         viewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Downloading, update, 46, "Downloading"));
         Assert.False(viewModel.CanRunUpdateAction);

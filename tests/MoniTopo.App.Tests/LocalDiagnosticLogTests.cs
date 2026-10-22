@@ -10,7 +10,7 @@ public sealed class LocalDiagnosticLogTests
         var directory = Path.Combine(Path.GetTempPath(), "MoniTopo.App.Tests", Guid.NewGuid().ToString("N"));
         try
         {
-            _ = new LocalDiagnosticLog(directory, startupMessage: "MoniTopo 08.08.26 dev; package=2026.808.0.");
+            _ = new LocalDiagnosticLog(directory, startupMessage: "MoniTopo 2026.08.08 dev; package=2026.808.0.");
 
             var path = Assert.Single(Directory.GetFiles(directory, "monitopo-*.log"));
             var text = File.ReadAllText(path);

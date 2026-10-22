@@ -5,10 +5,13 @@ namespace MoniTopo.Core.Tests;
 public sealed class ReleaseVersionTests
 {
     [Theory]
-    [InlineData("2026.720.0", "20.07.26")]
-    [InlineData("2026.720.1", "20.07.26.1")]
-    [InlineData("2027.205.0", "05.02.27")]
-    [InlineData("2027.1205.2", "05.12.27.2")]
+    [InlineData("2026.1022.0", "2026.10.22")]
+    [InlineData("2026.1022.1", "2026.10.22.1")]
+    [InlineData("2026.720.0", "2026.07.20")]
+    [InlineData("2026.720.1", "2026.07.20.1")]
+    [InlineData("2027.205.0", "2027.02.05")]
+    [InlineData("2027.1205.2", "2027.12.05.2")]
+    [InlineData("2028.229.0", "2028.02.29")]
     public void PackageVersionFormatsForDisplay(string packageVersion, string displayVersion)
     {
         var parsed = ReleaseVersion.Parse(packageVersion);
@@ -25,6 +28,9 @@ public sealed class ReleaseVersionTests
     [InlineData("1999.101.0")]
     [InlineData("2026.720.-1")]
     [InlineData("v2026.720.0")]
+    [InlineData("2026.10.22")]
+    [InlineData("2026.10.22.1")]
+    [InlineData("2027.229.0")]
     public void InvalidPackageVersionsAreRejected(string value)
     {
         Assert.False(ReleaseVersion.TryParse(value, out _));

@@ -32,6 +32,8 @@ Installed builds check stable releases at most once per day when enabled. Choose
 
 Current limitations include the runtime-probed Windows scale contract, ambiguous identical monitors requiring manual binding, unsigned packages, and differences between GPU drivers, docks, and mixed-DPI setups. Follow the [manual display checklist](docs/manual-display-test.md) on the intended hardware. Profiles captured before capture schema 3 must be recaptured because older builds saved incorrect HDR-toggle state.
 
+Version labels use `YYYY.MM.DD` (first release: `2026.10.22`). Windows Installed Apps and update packages retain the ordered package version `2026.1022.0`; this is the same release, not a separate update channel.
+
 ## Development
 
 Install the .NET 10 SDK, then run:

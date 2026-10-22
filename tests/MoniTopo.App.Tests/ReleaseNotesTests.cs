@@ -19,7 +19,7 @@ public sealed class ReleaseNotesTests
     {
         StaDispatcherTest.Run(() =>
         {
-            var update = new AvailableUpdate("2026.1022.0", "22.10.26", "# Fixes\n- Corrected capture.");
+            var update = new AvailableUpdate("2026.1022.0", "2026.10.22", "# Fixes\n- Corrected capture.");
             var popup = new PopupWindow { ShowActivated = false, ShowInTaskbar = false };
             popup.ViewModel.ApplyUpdateState(new UpdateState(status, update, 50, "Update"));
             var updates = 0;
@@ -62,7 +62,7 @@ public sealed class ReleaseNotesTests
     {
         StaDispatcherTest.Run(() =>
         {
-            var dialog = new ReleaseNotesDialog(new AvailableUpdate("2026.1022.0", "22.10.26", notes));
+            var dialog = new ReleaseNotesDialog(new AvailableUpdate("2026.1022.0", "2026.10.22", notes));
             var text = new TextRange(dialog.NotesViewer.Document.ContentStart, dialog.NotesViewer.Document.ContentEnd).Text;
             Assert.Contains("Release notes are not available", text, StringComparison.Ordinal);
             dialog.Close();
@@ -75,7 +75,7 @@ public sealed class ReleaseNotesTests
     {
         StaDispatcherTest.Run(() =>
         {
-            var dialog = new ReleaseNotesDialog(new AvailableUpdate("2026.1022.0", "22.10.26",
+            var dialog = new ReleaseNotesDialog(new AvailableUpdate("2026.1022.0", "2026.10.22",
                 "# Fixes\n- HDR capture\n<script>untrusted()</script>\n[link](file:///example)\n" + string.Join('\n', Enumerable.Repeat("More notes", 100))))
             { ShowActivated = false, ShowInTaskbar = false };
             try
