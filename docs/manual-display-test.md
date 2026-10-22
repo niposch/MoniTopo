@@ -24,6 +24,16 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - After a switch, use another profile hotkey without restarting MoniTopo; it must still work.
 - If existing profiles predate complete virtual-mode capture, update each from its intended Windows setup before evaluating virtual desktop-image or dynamic-refresh restoration.
 
+## Profile setting edits (development editor)
+
+- Open **Edit display settings** for a connected active display. Compare available resolution/rate pairs, Windows scale steps, and HDR choices against Windows Settings. Verify fractional rates remain distinct where reported.
+- Change a resolution and confirm its refresh-rate list updates. Save and confirm the desktop has not changed; then explicitly activate and verify the requested source resolution, refresh, scale, HDR, and primary display.
+- Resize the primary display in a side-by-side profile and confirm its neighbor remains attached on the same edge; repeat with a display left/above the primary. Complex conflicting attachments must give an error without saving or applying.
+- Cancel a changed draft and confirm the profile is unchanged. Disconnect/disable a saved display and confirm missing options are explained rather than replaced with guessed values.
+- Change HDR only and scale only and confirm captured mode data remains intact. For clones, source mode and scale controls should be read-only while supported per-target HDR remains available.
+- Change the connected setup while an editor is open. A stale capability or changed profile must be rejected on Save; no display changes may happen during this check.
+- Activation failure must use the existing validated rollback/recovery path. Do not deliberately choose a destructive configuration or automate real writes to test the editor.
+
 ## Missing, extra, and changed displays
 
 - Disconnect or fully power off the television while Desktop is active; Desktop should remain matched.

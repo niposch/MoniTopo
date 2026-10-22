@@ -24,6 +24,8 @@ On first run, choose whether MoniTopo should start when you sign in, then captur
 
 The tray popup shows each saved layout, name, and hotkey. It opens beside the primary monitor's notification area, independent of the pointer position. **Settings → Open tray popup** changes its global shortcut (default **Ctrl+Alt+M**). Single-key shortcuts are allowed after confirmation because they intercept that key in other applications. Profile hotkeys also appear in the main profile list.
 
+In the main window, select a profile and choose **Edit display settings** to change resolution, refresh rate, HDR, and Windows scale using available-option dropdowns. Refresh choices follow the selected resolution. **Save profile** only saves; choose **Activate** separately to apply it. Resolution changes keep connected monitor edges together without a layout editor. Disconnected or inactive displays keep their saved values until Windows can report their options. For cloned displays, change the shared mode and scale in Windows and use **Update from current setup**; HDR remains editable per display. This editor is in development and is not included in release 22.10.26.
+
 Choose **System**, **Light**, or **Dark** under **Settings → General → Theme**. The choice applies immediately to MoniTopo and is remembered; it does not change the Windows theme.
 
 Display activation requires an explicit click/hotkey and `MONITOPO_ALLOW_REAL_DISPLAY_CHANGES=1` in the app's environment. Set that user environment variable yourself and restart MoniTopo before switching profiles. Without it, capture and preview work, but activation is disabled. Starting the application never applies a profile automatically. See the [safety boundary](docs/development.md#safety-boundary) for details.

@@ -53,9 +53,9 @@ public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolve
             var saved = savedById[displayId];
             if (saved.Position != currentPath.Position - primaryOffset ||
                 saved.SourceResolution != currentPath.SourceResolution ||
-                !saved.RefreshRate.IsEquivalentTo(currentPath.RefreshRate) ||
+                !saved.RefreshRate.IsEquivalentTo(currentPath.RefreshRate, saved.ModeRequest is null ? 0.1 : 0.005) ||
                 saved.Orientation != currentPath.Orientation ||
-                saved.PathScaling != currentPath.PathScaling ||
+                (saved.ModeRequest is null && saved.PathScaling != currentPath.PathScaling) ||
                 saved.WindowsUiScalePercent != currentPath.WindowsUiScalePercent ||
                 saved.HdrEnabled != currentPath.HdrEnabled)
             {
@@ -64,12 +64,14 @@ public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolve
 
             if ((saved.TargetSignal is { } savedSignal &&
                 (currentPath.TargetSignal is not { } currentSignal || !savedSignal.IsEquivalentTo(currentSignal))) ||
-                (profile.CaptureSchemaVersion >= 4 && saved.TargetSignal is null))
+                (profile.CaptureSchemaVersion >= 4 && saved.TargetSignal is null && saved.ModeRequest is null) ||
+                (saved.ModeRequest is { } request && (currentPath.TargetSignal is not { IsValid: true } observed ||
+                    observed.ScanLineOrdering != request.ScanLineOrdering)))
             {
                 return new ProfileMatchResult(false, "target-signal", resolution);
             }
 
-            if (((profile.CaptureSchemaVersion >= 4 || saved.DesktopImage is not null) &&
+            if ((saved.ModeRequest is null && (profile.CaptureSchemaVersion >= 4 || saved.DesktopImage is not null) &&
                 saved.DesktopImage != currentPath.DesktopImage) ||
                 (saved.BoostRefreshRate is bool boost && currentPath.BoostRefreshRate != boost))
             {

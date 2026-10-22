@@ -176,12 +176,32 @@ public sealed record DesiredDisplayPath(
     bool IsPrimary,
     string FriendlyLabel)
 {
+    // Explicit mode selection has no invented physical timings: Windows resolves
+    // the target timing while the requested source size/rate remain mandatory.
+    public DisplayModeRequest? ModeRequest { get; init; }
+
     public DisplayTargetSignal? TargetSignal { get; init; }
 
     public DisplayDesktopImage? DesktopImage { get; init; }
 
     // Null means a legacy capture did not record dynamic refresh-rate policy.
     public bool? BoostRefreshRate { get; init; }
+}
+
+public sealed record DisplayModeRequest(uint ScanLineOrdering);
+
+public sealed record AvailableDisplayMode(DisplaySize Resolution, RefreshRate RefreshRate, uint ScanLineOrdering);
+
+public sealed record DisplaySettingsCapability(
+    string DisplayId,
+    IReadOnlyList<AvailableDisplayMode> Modes,
+    IReadOnlyList<int> ScalePercentages,
+    IReadOnlyList<bool> HdrStates,
+    string? Message);
+
+public interface IDisplaySettingsCapabilities
+{
+    Task<IReadOnlyList<DisplaySettingsCapability>> QueryAsync(DisplayProfile profile, CancellationToken cancellationToken = default);
 }
 
 public sealed record ConnectedDisplayState(

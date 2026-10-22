@@ -191,6 +191,20 @@ public partial class MainWindow : Window, IDisposable
         });
     }
 
+    private async void OnEditDisplaySettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel?.SelectedProfile is not { } selected || _profiles is null) return;
+        await RunActionAsync(async () =>
+        {
+            var capabilities = await _profiles.GetSettingsCapabilitiesAsync(selected).ConfigureAwait(true);
+            var editor = new DisplaySettingsEditorViewModel(selected, capabilities);
+            var dialog = new DisplaySettingsEditorDialog(editor) { Owner = this };
+            if (dialog.ShowDialog() != true || !editor.HasChanges) return string.Empty;
+            await _profiles.SaveDisplaySettingsAsync(selected, editor.GetEdits()).ConfigureAwait(true);
+            return "Display settings saved to the profile. Activate it to apply the changes.";
+        });
+    }
+
     private async void OnActivateClick(object sender, RoutedEventArgs e)
     {
         if (_viewModel?.SelectedProfile is not { } profile)

@@ -67,7 +67,7 @@ internal static class DisplayConfigurationPlanBuilder
         var paths = new List<NativePathInfo>(profile.Displays.Count);
         foreach (var display in profile.Displays)
         {
-            if (display.TargetSignal is not DisplayTargetSignal targetSignal)
+            if (display.TargetSignal is null && display.ModeRequest is null)
             {
                 throw new ActivationFailureException(
                     "activation.profile.target-signal-missing",
@@ -78,29 +78,35 @@ internal static class DisplayConfigurationPlanBuilder
             var source = sourceAssignments[display.SourceGroupId];
             var availablePath = targetPaths[binding.RuntimeId]
                 .First(path => SameSource(path.SourceInfo, source));
-            var targetModeIndex = checked((uint)modes.Count);
-            modes.Add(new NativeModeInfo
+            // A mode request supplies exact source size/rate, not fabricated target
+            // blanking/pixel clocks. Windows completes only this missing timing.
+            var targetModeIndex = uint.MaxValue;
+            if (display.TargetSignal is { } targetSignal)
             {
-                InfoType = TargetModeType,
-                Id = availablePath.TargetInfo.Id,
-                AdapterId = availablePath.TargetInfo.AdapterId,
-                Mode = new NativeModeUnion
+                targetModeIndex = checked((uint)modes.Count);
+                modes.Add(new NativeModeInfo
                 {
-                    TargetMode = new NativeTargetMode
+                    InfoType = TargetModeType,
+                    Id = availablePath.TargetInfo.Id,
+                    AdapterId = availablePath.TargetInfo.AdapterId,
+                    Mode = new NativeModeUnion
                     {
-                        TargetVideoSignalInfo = new NativeVideoSignalInfo
+                        TargetMode = new NativeTargetMode
                         {
-                            PixelRate = targetSignal.PixelRate,
-                            HorizontalSyncFrequency = ToNative(targetSignal.HorizontalSyncFrequency),
-                            VerticalSyncFrequency = ToNative(targetSignal.VerticalSyncFrequency),
-                            ActiveSize = ToNative(targetSignal.ActiveSize),
-                            TotalSize = ToNative(targetSignal.TotalSize),
-                            VideoStandard = targetSignal.VideoStandard,
-                            ScanLineOrdering = targetSignal.ScanLineOrdering,
+                            TargetVideoSignalInfo = new NativeVideoSignalInfo
+                            {
+                                PixelRate = targetSignal.PixelRate,
+                                HorizontalSyncFrequency = ToNative(targetSignal.HorizontalSyncFrequency),
+                                VerticalSyncFrequency = ToNative(targetSignal.VerticalSyncFrequency),
+                                ActiveSize = ToNative(targetSignal.ActiveSize),
+                                TotalSize = ToNative(targetSignal.TotalSize),
+                                VideoStandard = targetSignal.VideoStandard,
+                                ScanLineOrdering = targetSignal.ScanLineOrdering,
+                            },
                         },
                     },
-                },
-            });
+                });
+            }
 
             var sourceModeIndex = sourceModeIndexes[display.SourceGroupId];
             var useVirtualModeIndexes = forceVirtualModeIndexes || availablePath.SupportsVirtualMode || display.DesktopImage is not null;
@@ -140,13 +146,13 @@ internal static class DisplayConfigurationPlanBuilder
                     AdapterId = availablePath.TargetInfo.AdapterId,
                     Id = availablePath.TargetInfo.Id,
                     ModeInfoIndex = useVirtualModeIndexes
-                        ? (NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex) & 0xFFFF0000u) | desktopModeIndex
+                        ? (targetModeIndex == uint.MaxValue ? 0xFFFF0000u : NativeDisplayConfigModeIndexes.EncodeVirtual(targetModeIndex) & 0xFFFF0000u) | desktopModeIndex
                         : targetModeIndex,
                     OutputTechnology = availablePath.TargetInfo.OutputTechnology,
                     Rotation = ToNative(display.Orientation),
                     Scaling = ToNative(display.PathScaling),
                     RefreshRate = ToNative(display.RefreshRate),
-                    ScanLineOrdering = targetSignal.ScanLineOrdering,
+                    ScanLineOrdering = display.ModeRequest?.ScanLineOrdering ?? display.TargetSignal!.ScanLineOrdering,
                     TargetAvailable = 1,
                 },
                 Flags = NativeDisplayConfigPathFlags.Active |

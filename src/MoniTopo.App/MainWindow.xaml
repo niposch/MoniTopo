@@ -107,6 +107,7 @@
                                 </DockPanel>
                                 <TextBlock Text="{Binding SelectedProfileSummary}" Margin="0,0,0,10" Opacity="0.72" />
                                 <WrapPanel x:Name="ProfileActions" Margin="0,0,0,4">
+                                    <Button Content="Edit display settings" Margin="0,0,8,8" Click="OnEditDisplaySettingsClick" IsEnabled="{Binding HasSelection}" />
                                     <Button Content="Update from current setup" Margin="0,0,8,8" Click="OnUpdateClick" IsEnabled="{Binding HasSelection}" />
                                     <Button Content="Assign hotkey" Margin="0,0,8,8" Click="OnHotkeyClick" IsEnabled="{Binding HasSelection}" />
                                     <Button Content="Resolve display binding" Margin="0,0,8,8" Click="OnResolveBindingClick" IsEnabled="{Binding HasSelection}" />

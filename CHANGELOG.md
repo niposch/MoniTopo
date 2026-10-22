@@ -1,5 +1,12 @@
 # Changelog
 
+## Profile settings editor — not yet released
+
+- Edit saved resolution, refresh rate, HDR, and Windows scale through display-capability dropdowns; saving is separate from activation.
+- Filter refresh rates by resolution, preserve fractional rates, recheck available options before saving, and keep unavailable values intact.
+- Preserve connected monitor edges after resolution edits, reject conflicting arrangements, and use Windows timing selection without relaxing exact requested settings or recovery.
+- Keep cloned source mode/scale changes capture-based; supported per-target HDR remains editable.
+
 ## 22.10.26 — first release
 
 - Save and restore Windows display profiles from the tray or global hotkeys, including topology, primary display, modes, Windows scale, and HDR.

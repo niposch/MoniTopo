@@ -13,9 +13,29 @@ public sealed class ProfileManagementService(
     ConfigurationSession configuration,
     IDisplayCaptureService captureService,
     ActiveProfileMatcher matcher,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    IDisplaySettingsCapabilities? capabilities = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    public async Task<IReadOnlyList<DisplaySettingsCapability>> GetSettingsCapabilitiesAsync(DisplayProfile profile, CancellationToken cancellationToken = default)
+    {
+        if (profile.CaptureSchemaVersion < 4)
+            throw new InvalidOperationException("Update this profile from the current setup before editing its display settings.");
+        return capabilities is null ? throw new InvalidOperationException("Display settings enumeration is unavailable.") :
+            await capabilities.QueryAsync(profile, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DisplayProfile> SaveDisplaySettingsAsync(DisplayProfile original, IReadOnlyList<DisplaySettingsEdit> edits, CancellationToken cancellationToken = default)
+    {
+        var available = await GetSettingsCapabilitiesAsync(original, cancellationToken).ConfigureAwait(false);
+        return await ReplaceAsync(original.Id, latest =>
+        {
+            if (!latest.Displays.SequenceEqual(original.Displays) || latest.PrimaryDisplayId != original.PrimaryDisplayId || latest.CaptureSchemaVersion != original.CaptureSchemaVersion)
+                throw new InvalidOperationException("The saved display setup changed while the editor was open. Reopen it before saving.");
+            return ProfileNormalizer.Normalize(ProfileSettingsEditor.Apply(latest, edits, available) with { UpdatedUtc = _timeProvider.GetUtcNow() });
+        }, cancellationToken).ConfigureAwait(false);
+    }
 
     public Task<CapturedDisplaySnapshot> CaptureCurrentAsync(CancellationToken cancellationToken = default) =>
         captureService.CaptureAsync(cancellationToken);

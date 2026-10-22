@@ -9,6 +9,39 @@ namespace MoniTopo.Core.Tests;
 
 public sealed class ProfileActivationServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestedModeUsesNormalVerificationAndRollsBackIfWindowsChoosesAnotherRate(bool wrongRate)
+    {
+        var requested = TestData.Profile() with
+        {
+            CaptureSchemaVersion = 5,
+            Displays = [TestData.Display() with { TargetSignal = null, ModeRequest = new DisplayModeRequest(1),
+                RefreshRate = new RefreshRate(120, 1), BoostRefreshRate = false }],
+        };
+        var observed = Snapshot(requested, display => display with
+        {
+            ModeRequest = null,
+            RefreshRate = new RefreshRate(wrongRate ? 60 : 120, 1),
+            TargetSignal = new DisplayTargetSignal(241500000, new RefreshRate(90000, 1), new RefreshRate(120, 1),
+                display.SourceResolution, new DisplaySize(2720, 1480), 0, 1)
+        });
+        var backend = new FakeActivationBackend(observed);
+        var state = new FakeActivationStateStore();
+        using var service = CreateService(backend, state: state);
+        var result = await service.ActivateAsync(requested);
+        Assert.Equal(wrongRate ? ActivationOutcome.Failed : ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(wrongRate, result.RollbackSucceeded);
+        if (wrongRate)
+        {
+            Assert.Contains("rollback", backend.Calls);
+            Assert.DoesNotContain("persist", backend.Calls);
+            Assert.Null(state.LastActivatedProfileId);
+        }
+        else Assert.Equal(requested.Id, state.LastActivatedProfileId);
+    }
+
     [Fact]
     public async Task SuccessfulActivationRunsValidatedTwoPhaseSequence()
     {

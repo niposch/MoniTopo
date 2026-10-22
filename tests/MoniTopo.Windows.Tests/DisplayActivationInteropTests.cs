@@ -10,6 +10,36 @@ namespace MoniTopo.Windows.Tests;
 
 public sealed class DisplayActivationInteropTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EditedModeRequestsSupplySourceAndRateButNeverStaleTargetTimings(bool virtualMode)
+    {
+        var adapter = new NativeAdapterId(1, 0);
+        var available = AvailableConfiguration(adapter);
+        available = available with { Paths = available.Paths.Select(path => { path.Flags = virtualMode ? 0x8u : 0; return path; }).ToArray() };
+        var display = Display("display-1", "source-a", true, new DisplayPoint(0, 0), 0) with
+        {
+            SourceResolution = new DisplaySize(1920, 1080),
+            RefreshRate = new RefreshRate(120000, 1001),
+            TargetSignal = null,
+            ModeRequest = new DisplayModeRequest(1),
+            DesktopImage = null,
+            BoostRefreshRate = false,
+        };
+        var plan = DisplayConfigurationPlanBuilder.Build(Profile([display]),
+            [new ResolvedIdentityBinding(display.DisplayId, TargetKey(adapter, 0), 100)], available);
+        var path = Assert.Single(plan.Paths);
+        Assert.Equal(uint.MaxValue, path.TargetInfo.ModeInfoIndex);
+        Assert.Equal(120000u, path.TargetInfo.RefreshRate.Numerator);
+        Assert.Equal(1001u, path.TargetInfo.RefreshRate.Denominator);
+        Assert.Equal(1u, path.TargetInfo.ScanLineOrdering);
+        var source = Assert.Single(plan.Modes);
+        Assert.Equal(1u, source.InfoType);
+        Assert.Equal(1920u, source.Mode.SourceMode.Width);
+        Assert.Equal(1080u, source.Mode.SourceMode.Height);
+    }
+
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     [Fact]
