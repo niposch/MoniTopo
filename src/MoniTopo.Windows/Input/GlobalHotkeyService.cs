@@ -49,6 +49,7 @@ public sealed class GlobalHotkeyService : IDisposable
     private const uint NoRepeat = 0x4000;
     private readonly nint _windowHandle;
     private readonly IGlobalHotkeyNative _native;
+    private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
     private readonly Dictionary<int, Registration> _registrations = [];
     private readonly Dictionary<Guid, int> _profileIds = [];
     private int _nextId = 2;
@@ -78,6 +79,7 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public HotkeyRegistrationResult RegisterProfile(Guid profileId, HotkeyBinding? binding)
     {
+        VerifyAccess();
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_profileIds.TryGetValue(profileId, out var id))
         {
@@ -100,6 +102,7 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public IReadOnlyList<HotkeyRegistrationResult> SetProfileHotkeysEnabled(bool enabled)
     {
+        VerifyAccess();
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_profileHotkeysEnabled == enabled)
         {
@@ -133,6 +136,7 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public bool ProcessWindowMessage(int message, nint wParam)
     {
+        VerifyAccess();
         ObjectDisposedException.ThrowIf(_disposed, this);
         const int WmHotkey = 0x0312;
         if (message != WmHotkey || !_registrations.TryGetValue(wParam.ToInt32(), out var registration) || !registration.IsRegistered)
@@ -146,6 +150,7 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public void Dispose()
     {
+        VerifyAccess();
         if (_disposed)
         {
             return;
@@ -170,8 +175,9 @@ public sealed class GlobalHotkeyService : IDisposable
         HotkeyBinding binding,
         bool shouldRegister)
     {
+        VerifyAccess();
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_registrations.TryGetValue(id, out var previous) && previous.Binding == binding)
+        if (_registrations.TryGetValue(id, out var previous) && previous.Binding == binding && (previous.IsRegistered || !shouldRegister))
         {
             return new HotkeyRegistrationResult(true, null, previous.IsRegistered);
         }
@@ -191,6 +197,15 @@ public sealed class GlobalHotkeyService : IDisposable
 
         if (!shouldRegister)
         {
+            // Settings changes share the interaction lease and temporarily suppress
+            // profile hotkeys. Still probe Windows ownership before persisting a new
+            // binding, then remove the probe so it cannot activate during the edit.
+            if (!TryRegister(id, binding))
+            {
+                return ConflictResult(previousBindingRetained: false);
+            }
+
+            _native.Unregister(_windowHandle, id);
             _registrations[id] = new Registration(command, binding, false);
             return new HotkeyRegistrationResult(true, null, false);
         }
@@ -215,6 +230,14 @@ public sealed class GlobalHotkeyService : IDisposable
         id,
         checked((uint)binding.Modifiers) | NoRepeat,
         checked((uint)binding.VirtualKey));
+
+    private void VerifyAccess()
+    {
+        if (Environment.CurrentManagedThreadId != _ownerThreadId)
+        {
+            throw new InvalidOperationException("Global hotkeys must be managed on the thread that owns their message window.");
+        }
+    }
 
     private void RemoveRegistration(int id)
     {

@@ -56,6 +56,30 @@ public sealed class DisplayStateRefreshServiceTests
         Assert.Equal(0, refreshCount);
     }
 
+    [Fact]
+    public async Task DisposalCancelsAndDrainsInflightRefreshBeforeDisposingItsGate()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken observedToken = default;
+        var service = CreateService(async token =>
+        {
+            observedToken = token;
+            started.SetResult();
+            await release.Task;
+        });
+        var refresh = service.RunConsistencyCheckAsync();
+        await started.Task;
+
+        var disposal = service.DisposeAsync().AsTask();
+        Assert.True(observedToken.IsCancellationRequested);
+        Assert.False(disposal.IsCompleted);
+        await service.RunConsistencyCheckAsync();
+        release.SetResult();
+
+        await Task.WhenAll(disposal, refresh);
+    }
+
     private static DisplayStateRefreshService CreateService(Func<CancellationToken, Task> refresh) => new(
         refresh,
         TimeProvider.System,

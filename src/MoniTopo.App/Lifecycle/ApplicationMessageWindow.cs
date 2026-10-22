@@ -8,7 +8,6 @@ public sealed class ApplicationMessageWindow : IDisposable
     private const int WmDisplayChange = 0x007E;
     private const int WmSettingChange = 0x001A;
     private const int WmDeviceChange = 0x0219;
-    private static readonly nint MessageOnlyWindow = (nint)(-3);
     private readonly HwndSource _source;
     private GlobalHotkeyService? _hotkeys;
 
@@ -16,7 +15,9 @@ public sealed class ApplicationMessageWindow : IDisposable
     {
         var parameters = new HwndSourceParameters("MoniTopo.MessageWindow")
         {
-            ParentWindow = MessageOnlyWindow,
+            // Broadcast display/settings messages exclude HWND_MESSAGE windows.
+            // This is an invisible, unowned top-level window without WS_VISIBLE.
+            ParentWindow = nint.Zero,
             WindowStyle = 0,
             Width = 0,
             Height = 0,

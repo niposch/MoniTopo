@@ -106,6 +106,83 @@ public sealed class ActivationInteractionControllerTests
         Assert.Equal(1, activator.CallCount);
     }
 
+    [Fact]
+    public void DelayedActivationMarshalsHotkeysAndNotificationsToOwnerDispatcher()
+    {
+        StaDispatcherTest.Run(async () =>
+        {
+            var ownerThread = Environment.CurrentManagedThreadId;
+            var callbacks = new List<int>();
+            var notifications = new FakeNotifications { OnNotify = () => callbacks.Add(Environment.CurrentManagedThreadId) };
+            var activator = new DelayedActivator();
+            var states = new List<bool>();
+            var controller = new ActivationInteractionController(activator, notifications, enabled =>
+            {
+                callbacks.Add(Environment.CurrentManagedThreadId);
+                states.Add(enabled);
+            }, dispatcher: new WpfUiDispatcher(System.Windows.Threading.Dispatcher.CurrentDispatcher));
+            var activation = controller.ActivateAsync(Profile(), ActivationOrigin.DirectHotkey);
+            await activator.Started.Task;
+            var draining = controller.WaitForIdleAsync();
+
+            Assert.False(draining.IsCompleted);
+            Assert.Equal(ActivationOutcome.Busy, (await controller.ActivateAsync(Profile(), ActivationOrigin.Popup)).Outcome);
+            Assert.Equal([false], states);
+            await Task.Run(() => activator.Completion.SetResult(Success()));
+            await activation;
+            await draining;
+
+            Assert.Equal([false, true], states);
+            Assert.All(callbacks, id => Assert.Equal(ownerThread, id));
+            Assert.False(controller.IsBusy);
+        });
+    }
+
+    [Fact]
+    public async Task MainWindowInteractionPreventsActivationUntilItFinishes()
+    {
+        var activator = new FakeActivator(Success());
+        var states = new List<bool>();
+        var controller = new ActivationInteractionController(activator, new FakeNotifications(), states.Add);
+        var interaction = await controller.TryBeginInteractionAsync();
+        Assert.NotNull(interaction);
+        Assert.Equal(ActivationOutcome.Busy, (await controller.ActivateAsync(Profile(), ActivationOrigin.DirectHotkey)).Outcome);
+        Assert.Equal(0, activator.CallCount);
+        await interaction.DisposeAsync();
+        Assert.Equal(ActivationOutcome.Success, (await controller.ActivateAsync(Profile(), ActivationOrigin.Popup)).Outcome);
+        Assert.Equal([false, true, false, true], states);
+    }
+
+    [Fact]
+    public async Task ShutdownDrainsCurrentActivationAndRejectsNewOperations()
+    {
+        var activator = new DelayedActivator();
+        var states = new List<bool>();
+        var controller = new ActivationInteractionController(activator, new FakeNotifications(), states.Add);
+        var activation = controller.ActivateAsync(Profile(), ActivationOrigin.MainWindow);
+        await activator.Started.Task;
+        var shutdown = controller.BeginShutdownAsync();
+        Assert.False(shutdown.IsCompleted);
+        activator.Completion.SetResult(Success());
+        await Task.WhenAll(activation, shutdown);
+
+        Assert.Null(await controller.TryBeginInteractionAsync());
+        Assert.Equal(ActivationOutcome.Busy, (await controller.ActivateAsync(Profile(), ActivationOrigin.Popup)).Outcome);
+        Assert.Equal([false, false], states);
+    }
+
+    private sealed class DelayedActivator : IProfileActivator
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<ActivationResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<ActivationResult> ActivateAsync(DisplayProfile profile, IProgress<ActivationProgress>? progress, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            return Completion.Task;
+        }
+    }
+
     private static ActivationResult Success() => new(
         ActivationOutcome.Success,
         "Movie activated",
@@ -174,13 +251,14 @@ public sealed class ActivationInteractionControllerTests
 
     private sealed class FakeNotifications : IUserNotificationService
     {
+        internal Action? OnNotify { get; init; }
         internal List<string> Information { get; } = [];
 
         internal List<string> Errors { get; } = [];
 
-        public void ShowInformation(string message) => Information.Add(message);
+        public void ShowInformation(string message) { OnNotify?.Invoke(); Information.Add(message); }
 
-        public void ShowError(string message) => Errors.Add(message);
+        public void ShowError(string message) { OnNotify?.Invoke(); Errors.Add(message); }
     }
 
     private sealed class FakeSurfaces : IApplicationSurfaces

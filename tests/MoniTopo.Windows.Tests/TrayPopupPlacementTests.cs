@@ -34,6 +34,18 @@ public sealed class TrayPopupPlacementTests
     }
 
     [Theory]
+    [InlineData(-3840, 0, -1920, 1080, -2040, 1040, 1080, 780)]
+    [InlineData(1920, -2160, 5760, 0, 5700, -40, 1080, 780)]
+    public void PhysicalPlacementStaysOnChosenMonitorAtThreeHundredPercentDpi(int left, int top, int right, int bottom, int anchorX, int anchorY, int width, int height)
+    {
+        var area = new PixelRect(left, top, right, bottom);
+        var point = TrayPopupPlacement.CalculatePixels(new PixelRect(anchorX, anchorY, anchorX + 1, anchorY + 1), area, new PixelSize(width, height));
+
+        Assert.InRange(point.X, left + 8, right - width - 8);
+        Assert.InRange(point.Y, top + 8, bottom - height - 8);
+    }
+
+    [Theory]
     [InlineData(0, 0, 1920, 1080, 0, 0, 1920, 1040, 1918, 1040)]
     [InlineData(0, 0, 1920, 1080, 0, 40, 1920, 1080, 1918, 38)]
     [InlineData(0, 0, 1920, 1080, 0, 0, 1880, 1080, 1880, 1078)]

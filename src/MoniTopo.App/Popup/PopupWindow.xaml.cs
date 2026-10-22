@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using MoniTopo.Core.Models;
 using MoniTopo.Windows.Shell;
@@ -28,8 +29,10 @@ public partial class PopupWindow : Window
 
     public void ShowProfiles(IReadOnlyList<DisplayProfile> profiles, Guid? activeProfileId)
     {
+        PreparePlacement();
         ViewModel.Load(profiles, activeProfileId);
         Show();
+        PlaceNearNotificationArea();
         Activate();
         ProfileList.Focus();
         if (ViewModel.SelectedIndex >= 0)
@@ -57,6 +60,10 @@ public partial class PopupWindow : Window
             Hide();
             e.Handled = true;
         }
+        else if (!ProfileList.IsKeyboardFocusWithin)
+        {
+            return;
+        }
         else if (e.Key == Key.Left)
         {
             ViewModel.MoveSelection(-1);
@@ -69,12 +76,12 @@ public partial class PopupWindow : Window
         }
         else if (e.Key == Key.Up)
         {
-            ViewModel.MoveSelection(-3);
+            ViewModel.MoveSelection(-ColumnCount);
             e.Handled = true;
         }
         else if (e.Key == Key.Down)
         {
-            ViewModel.MoveSelection(3);
+            ViewModel.MoveSelection(ColumnCount);
             e.Handled = true;
         }
         else if (e.Key == Key.Enter && !ViewModel.IsBusy)
@@ -83,6 +90,8 @@ public partial class PopupWindow : Window
             e.Handled = true;
         }
     }
+
+    private int ColumnCount => Math.Max(1, (int)(ProfileList.ActualWidth / 114));
 
     private void OnProfileClick(object sender, MouseButtonEventArgs e)
     {
@@ -114,27 +123,51 @@ public partial class PopupWindow : Window
 
     private void RequestSelectedActivation()
     {
-        if (ViewModel.SelectedProfile is { } selected)
+        if (!ViewModel.IsBusy && ViewModel.SelectedProfile is { } selected)
         {
             ActivateProfileRequested?.Invoke(this, selected.Id);
         }
     }
 
-    private void OnContentRendered(object? sender, EventArgs e)
+    private void OnContentRendered(object? sender, EventArgs e) => PlaceNearNotificationArea();
+
+    private Forms.Screen? _placementScreen;
+    private PixelRect _anchor;
+
+    private void PreparePlacement()
     {
-        var screen = Forms.Screen.PrimaryScreen ?? throw new InvalidOperationException("Windows did not report a primary screen.");
+        var cursor = Forms.Cursor.Position;
+        var screen = Forms.Screen.FromPoint(cursor);
+        _placementScreen = screen;
         var bounds = ToPixelRect(screen.Bounds);
         var workArea = ToPixelRect(screen.WorkingArea);
-        var anchor = TrayPopupPlacement.DefaultNotificationAnchor(bounds, workArea);
+        _anchor = screen.Bounds.Contains(cursor) && !screen.WorkingArea.Contains(cursor)
+            ? new PixelRect(cursor.X, cursor.Y, cursor.X + 1, cursor.Y + 1)
+            : TrayPopupPlacement.DefaultNotificationAnchor(bounds, workArea);
+        var scale = DesktopWindowPlacement.GetDpi(new PixelPoint(cursor.X, cursor.Y)) / 96d;
+        MaxHeight = Math.Max(100, (workArea.Height - 16) / scale);
+        Width = Math.Min(360, (workArea.Width - 16) / scale);
+        // Move the HWND first so WPF measures using the destination monitor's DPI.
+        var handle = new WindowInteropHelper(this).EnsureHandle();
+        DesktopWindowPlacement.MoveWindow(handle, new PixelPoint(workArea.Right - 1, workArea.Bottom - 1));
+    }
+
+    private void PlaceNearNotificationArea()
+    {
+        if (_placementScreen is null)
+        {
+            PreparePlacement();
+        }
+
+        var workArea = ToPixelRect(_placementScreen!.WorkingArea);
         var dpi = VisualTreeHelper.GetDpi(this);
-        MaxHeight = Math.Max(240, (workArea.Height - 16) / dpi.DpiScaleY);
+        MaxHeight = Math.Max(100, (workArea.Height - 16) / dpi.DpiScaleY);
         UpdateLayout();
         var popupSize = new PixelSize(
             checked((int)Math.Ceiling(ActualWidth * dpi.DpiScaleX)),
             checked((int)Math.Ceiling(ActualHeight * dpi.DpiScaleY)));
-        var placement = TrayPopupPlacement.Calculate(anchor, workArea, popupSize, checked((uint)Math.Round(dpi.PixelsPerInchX)));
-        Left = placement.LeftDip;
-        Top = placement.TopDip;
+        var placement = TrayPopupPlacement.CalculatePixels(_anchor, workArea, popupSize);
+        DesktopWindowPlacement.MoveWindow(new WindowInteropHelper(this).Handle, placement);
     }
 
     private static PixelRect ToPixelRect(System.Drawing.Rectangle rectangle) => new(

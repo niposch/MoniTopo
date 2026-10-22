@@ -34,6 +34,12 @@ public sealed class WindowStartupSmokeTests
             var navigation = LogicalDescendants<TabControl>(window).Single();
             Assert.Equal("Settings", ((TabItem)navigation.SelectedItem).Header);
             window.ShowProfilesPage();
+            window.Width = 740;
+            window.UpdateLayout();
+            Assert.Equal(1, Grid.GetRow((ScrollViewer)window.FindName("ProfileDetails")));
+            window.Width = 980;
+            window.UpdateLayout();
+            Assert.Equal(2, Grid.GetColumn((ScrollViewer)window.FindName("ProfileDetails")));
             window.AllowClose();
             window.Close();
         });
@@ -91,6 +97,59 @@ public sealed class WindowStartupSmokeTests
             Assert.True(window.ShowDialog());
             Assert.True(window.StartAtLogin);
         });
+    }
+
+    [Fact]
+    public void PopupRoutesEnterToFooterButtonsAndProfileActivationOnlyInsideList()
+    {
+        RunInSta(() =>
+        {
+            var window = new PopupWindow { ShowInTaskbar = false, ShowActivated = false };
+            window.ViewModel.Profiles.Add(new PopupProfileItem(Guid.NewGuid(), "Desktop", 2, "", true));
+            window.ViewModel.Profiles.Add(new PopupProfileItem(Guid.NewGuid(), "Movie", 1, "", false));
+            window.ViewModel.SelectedIndex = 0;
+            window.ViewModel.ApplyUpdateState(new UpdateState(UpdateStatus.Available,
+                new AvailableUpdate("2026.721.0", "21.07.26", null), 0, "Available"));
+            var activations = 0;
+            var opens = 0;
+            var updates = 0;
+            window.ActivateProfileRequested += (_, _) => activations++;
+            window.MainWindowRequested += (_, _) => opens++;
+            window.UpdateActionRequested += (_, _) => updates++;
+            window.Show();
+            window.UpdateLayout();
+            var buttons = LogicalDescendants<Button>(window).ToArray();
+            var open = buttons.Single(button => AutomationProperties.GetName(button) == "Open MoniTopo");
+            var update = buttons.Single(button => AutomationProperties.GetName(button) == "Update MoniTopo");
+            Keyboard.Focus(update);
+            RaiseKey(update, window, Key.Right, Keyboard.PreviewKeyDownEvent);
+            Assert.Equal(0, window.ViewModel.SelectedIndex);
+            Assert.False(RaiseKey(update, window, Key.Enter, Keyboard.PreviewKeyDownEvent).Handled);
+            RaiseKey(update, window, Key.Enter, Keyboard.KeyDownEvent);
+            Assert.Equal(1, updates);
+            Assert.Equal(0, activations);
+            Keyboard.Focus(open);
+            Assert.False(RaiseKey(open, window, Key.Enter, Keyboard.PreviewKeyDownEvent).Handled);
+            RaiseKey(open, window, Key.Enter, Keyboard.KeyDownEvent);
+            Assert.Equal(1, opens);
+            Assert.Equal(0, activations);
+            window.Show();
+            var list = LogicalDescendants<ListBox>(window).Single();
+            Keyboard.Focus(list);
+            Assert.True(RaiseKey(list, window, Key.Enter, Keyboard.PreviewKeyDownEvent).Handled);
+            Assert.Equal(1, activations);
+            window.Close();
+        });
+    }
+
+    private static KeyEventArgs RaiseKey(UIElement target, Window window, Key key, RoutedEvent routedEvent)
+    {
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, key)
+        {
+            RoutedEvent = routedEvent,
+        };
+        target.RaiseEvent(args);
+        return args;
     }
 
     private static void RunInSta(Action action)

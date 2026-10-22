@@ -15,10 +15,11 @@ using MoniTopo.Core.Updates;
 using MoniTopo.Core.Validation;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
+using MoniTopo.Windows.Shell;
 
 namespace MoniTopo.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IDisposable
 {
     private bool _allowClose;
     private MainWindowViewModel? _viewModel;
@@ -54,8 +55,9 @@ public partial class MainWindow : Window
         _updates = updates;
         _logError = logError;
         _registerHotkey = registerHotkey;
-        _viewModel = new MainWindowViewModel(configuration, updates);
+        _viewModel = new MainWindowViewModel(configuration, updates, new WpfUiDispatcher(Dispatcher));
         DataContext = _viewModel;
+        activation.BusyChanged += (_, busy) => _viewModel.SetActivationBusy(busy);
         RestoreSavedBounds(configuration.Current.ApplicationSettings.LastMainWindowBounds);
     }
 
@@ -64,6 +66,14 @@ public partial class MainWindow : Window
     public void ShowProfilesPage() => MainNavigation.SelectedIndex = 0;
 
     public void ShowSettingsPage() => MainNavigation.SelectedIndex = 1;
+
+    public void ReportStatus(string message)
+    {
+        if (_viewModel is not null)
+        {
+            _viewModel.StatusMessage = message;
+        }
+    }
 
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -77,26 +87,46 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        Dispose();
+        base.OnClosed(e);
+    }
+
+    public void Dispose()
+    {
+        _viewModel?.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
     private void RestoreSavedBounds(WindowBounds? saved)
     {
-        if (saved is not { } bounds)
+        var workAreas = System.Windows.Forms.Screen.AllScreens.Select(screen =>
         {
-            return;
-        }
-
-        var workArea = SystemParameters.WorkArea;
+            var work = screen.WorkingArea;
+            var scale = DesktopWindowPlacement.GetDpi(new PixelPoint(work.Left, work.Top)) / 96d;
+            return new WindowBounds(work.Left / scale, work.Top / scale, work.Width / scale, work.Height / scale);
+        }).ToArray();
+        var primaryIndex = Array.FindIndex(System.Windows.Forms.Screen.AllScreens, screen => screen.Primary);
+        var initialArea = workAreas[Math.Max(0, primaryIndex)];
+        var bounds = saved ?? new WindowBounds(
+            initialArea.Left + Math.Max(0, (initialArea.Width - Width) / 2),
+            initialArea.Top + Math.Max(0, (initialArea.Height - Height) / 2),
+            Width, Height);
         var clamped = WindowBoundsClamp.Clamp(
             bounds,
-            [new WindowBounds(workArea.Left, workArea.Top, workArea.Width, workArea.Height)]);
+            workAreas);
         Left = clamped.Left;
         Top = clamped.Top;
-        Width = Math.Max(MinWidth, clamped.Width);
-        Height = Math.Max(MinHeight, clamped.Height);
+        MinWidth = Math.Min(MinWidth, clamped.Width);
+        MinHeight = Math.Min(MinHeight, clamped.Height);
+        Width = clamped.Width;
+        Height = clamped.Height;
     }
 
     private void SaveCurrentBounds()
     {
-        if (_configuration is null)
+        if (_configuration is null || !IsLoaded)
         {
             return;
         }
@@ -104,6 +134,10 @@ public partial class MainWindow : Window
         var bounds = WindowState == WindowState.Normal
             ? new WindowBounds(Left, Top, ActualWidth, ActualHeight)
             : new WindowBounds(RestoreBounds.Left, RestoreBounds.Top, RestoreBounds.Width, RestoreBounds.Height);
+        if (!WindowBoundsClamp.IsUsable(bounds))
+        {
+            return;
+        }
         try
         {
             _configuration.UpdateAsync(current => current with
@@ -159,7 +193,7 @@ public partial class MainWindow : Window
         {
             var result = await _activation!.ActivateAsync(profile, ActivationOrigin.MainWindow).ConfigureAwait(true);
             return result.Message;
-        });
+        }, isActivation: true);
     }
 
     private async void OnUpdateClick(object sender, RoutedEventArgs e)
@@ -284,9 +318,9 @@ public partial class MainWindow : Window
         {
             var snapshot = await _profiles!.CaptureCurrentAsync().ConfigureAwait(true);
             var dialog = new BindingResolutionDialog(profile, snapshot) { Owner = this };
-            if (dialog.ShowDialog() == true && dialog.DisplayId is not null && dialog.RuntimeId is not null)
+            if (dialog.ShowDialog() == true && dialog.DisplayId is not null && dialog.SelectedDisplay is not null)
             {
-                await _profiles.RememberBindingAsync(profile.Id, dialog.DisplayId, dialog.RuntimeId).ConfigureAwait(true);
+                await _profiles.RememberBindingAsync(profile.Id, dialog.DisplayId, dialog.SelectedDisplay).ConfigureAwait(true);
                 return "Display binding remembered";
             }
 
@@ -388,6 +422,14 @@ public partial class MainWindow : Window
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         PreviewHost.Height = e.NewSize.Height < 560 ? 190 : 280;
+        var stacked = e.NewSize.Width < 820;
+        ProfileBody.ColumnDefinitions[0].Width = stacked ? new GridLength(1, GridUnitType.Star) : new GridLength(240);
+        ProfileBody.ColumnDefinitions[1].Width = new GridLength(stacked ? 0 : 18);
+        ProfileBody.ColumnDefinitions[2].Width = stacked ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        ProfileBody.RowDefinitions[0].Height = stacked ? new GridLength(150) : new GridLength(1, GridUnitType.Star);
+        ProfileBody.RowDefinitions[1].Height = stacked ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        System.Windows.Controls.Grid.SetColumn(ProfileDetails, stacked ? 0 : 2);
+        System.Windows.Controls.Grid.SetRow(ProfileDetails, stacked ? 1 : 0);
     }
 
     private void OnRepositoryNavigate(object sender, RequestNavigateEventArgs e)
@@ -396,9 +438,17 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private async Task RunActionAsync(Func<Task<string>> action)
+    private async Task RunActionAsync(Func<Task<string>> action, bool isActivation = false)
     {
         if (_viewModel is null || _viewModel.IsBusy)
+        {
+            return;
+        }
+
+        await using var interaction = !isActivation && _activation is not null
+            ? await _activation.TryBeginInteractionAsync().ConfigureAwait(true)
+            : null;
+        if (!isActivation && _activation is not null && interaction is null)
         {
             return;
         }

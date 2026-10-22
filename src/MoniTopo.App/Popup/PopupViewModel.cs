@@ -63,7 +63,7 @@ public sealed class PopupViewModel : INotifyPropertyChanged
     public bool ShowUpdateAction => _updateState.Status is
         UpdateStatus.Available or UpdateStatus.Downloading or UpdateStatus.ReadyToInstall;
 
-    public bool CanRunUpdateAction => _updateState.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall;
+    public bool CanRunUpdateAction => !IsBusy && (_updateState.Status is UpdateStatus.Available or UpdateStatus.ReadyToInstall);
 
     public string UpdateActionText => _updateState.Status switch
     {
@@ -80,6 +80,16 @@ public sealed class PopupViewModel : INotifyPropertyChanged
 
     public void Load(IReadOnlyList<DisplayProfile> profiles, Guid? activeProfileId)
     {
+        RefreshProfiles(profiles, activeProfileId, selectActive: true);
+        if (!IsBusy)
+        {
+            StatusMessage = null;
+        }
+    }
+
+    public void RefreshProfiles(IReadOnlyList<DisplayProfile> profiles, Guid? activeProfileId, bool selectActive = false)
+    {
+        var selectedId = SelectedProfile?.Id;
         Profiles.Clear();
         foreach (var profile in profiles)
         {
@@ -92,12 +102,13 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         }
 
         CurrentState = Profiles.FirstOrDefault(profile => profile.IsActive)?.Name ?? "Custom";
-        SelectedIndex = Profiles.Count == 0
-            ? -1
+        var selected = selectActive ? -1 : Profiles.ToList().FindIndex(profile => profile.Id == selectedId);
+        SelectedIndex = Profiles.Count == 0 ? -1 : selected >= 0
+            ? selected
             : Math.Max(0, Profiles.ToList().FindIndex(profile => profile.IsActive));
-        StatusMessage = null;
-        IsBusy = false;
     }
+
+    public void SetActivationBusy(bool busy) => IsBusy = busy;
 
     public void MoveSelection(int direction)
     {
@@ -136,12 +147,10 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         StatusMessage = message;
         for (var index = 0; index < Profiles.Count; index++)
         {
-            Profiles[index] = Profiles[index] with { IsActive = succeeded && Profiles[index].Id == activeProfileId };
+            Profiles[index] = Profiles[index] with { IsActive = Profiles[index].Id == activeProfileId };
         }
 
-        CurrentState = succeeded
-            ? Profiles.FirstOrDefault(profile => profile.Id == activeProfileId)?.Name ?? "Custom"
-            : CurrentState;
+        CurrentState = Profiles.FirstOrDefault(profile => profile.Id == activeProfileId)?.Name ?? "Custom";
     }
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -160,6 +169,10 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         else if (propertyName == nameof(StatusMessage))
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasStatusMessage)));
+        }
+        else if (propertyName == nameof(IsBusy))
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRunUpdateAction)));
         }
     }
 }

@@ -24,7 +24,6 @@ public sealed class ProfileManagementService(
         string name,
         CancellationToken cancellationToken = default)
     {
-        EnsureUniqueName(name, exceptProfileId: null);
         var snapshot = await captureService.CaptureAsync(cancellationToken).ConfigureAwait(false);
         var now = _timeProvider.GetUtcNow();
         var profile = ProfileNormalizer.Normalize(new DisplayProfile(
@@ -37,15 +36,17 @@ public sealed class ProfileManagementService(
             snapshot.PrimaryDisplayId,
             DisplayProfileCaptureSchema.Current,
             []));
-        var duplicate = configuration.Current.Profiles.FirstOrDefault(existing => matcher.Match(existing, snapshot).IsMatch);
-        if (duplicate is null)
+        DisplayProfile? duplicate = null;
+        await configuration.UpdateAsync(current =>
         {
-            await configuration.UpdateAsync(current => current with
+            EnsureUniqueName(current, name, exceptProfileId: null);
+            duplicate = current.Profiles.FirstOrDefault(existing => matcher.Match(existing, snapshot).IsMatch);
+            return duplicate is not null ? current : current with
             {
                 Profiles = [.. current.Profiles, profile],
                 ProfileOrder = [.. current.ProfileOrder, profile.Id],
-            }, cancellationToken).ConfigureAwait(false);
-        }
+            };
+        }, cancellationToken).ConfigureAwait(false);
 
         return new ProfileCaptureResult(profile, duplicate);
     }
@@ -54,25 +55,21 @@ public sealed class ProfileManagementService(
         Guid profileId,
         CancellationToken cancellationToken = default)
     {
-        var existing = Find(profileId);
         var snapshot = await captureService.CaptureAsync(cancellationToken).ConfigureAwait(false);
-        var updated = ProfileNormalizer.Normalize(existing with
+        return await ReplaceAsync(profileId, existing => ProfileNormalizer.Normalize(existing with
         {
             UpdatedUtc = _timeProvider.GetUtcNow(),
             Displays = snapshot.ActivePaths,
             PrimaryDisplayId = snapshot.PrimaryDisplayId,
             CaptureSchemaVersion = DisplayProfileCaptureSchema.Current,
             LastSuccessfulIdentityBindings = [],
-        });
-        await ReplaceAsync(updated, cancellationToken).ConfigureAwait(false);
-        return updated;
+        }), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task RenameAsync(Guid profileId, string name, CancellationToken cancellationToken = default)
     {
-        EnsureUniqueName(name, profileId);
-        var profile = Find(profileId) with { Name = name, UpdatedUtc = _timeProvider.GetUtcNow() };
-        await ReplaceAsync(ProfileNormalizer.Normalize(profile), cancellationToken).ConfigureAwait(false);
+        await ReplaceAsync(profileId, profile => ProfileNormalizer.Normalize(profile with
+        { Name = name, UpdatedUtc = _timeProvider.GetUtcNow() }), cancellationToken).ConfigureAwait(false);
     }
 
     public Task SetHotkeyAsync(
@@ -80,8 +77,8 @@ public sealed class ProfileManagementService(
         HotkeyBinding? hotkey,
         CancellationToken cancellationToken = default)
     {
-        var updated = ValidateHotkey(profileId, hotkey);
-        return ReplaceAsync(updated, cancellationToken);
+        return ReplaceAsync(profileId, current => current with
+        { DirectHotkey = hotkey, UpdatedUtc = _timeProvider.GetUtcNow() }, cancellationToken);
     }
 
     public DisplayProfile ValidateHotkey(Guid profileId, HotkeyBinding? hotkey)
@@ -100,18 +97,26 @@ public sealed class ProfileManagementService(
         return updated;
     }
 
-    public Task RememberBindingAsync(
+    public async Task RememberBindingAsync(
         Guid profileId,
         string displayId,
-        string runtimeId,
+        ConnectedDisplayState selected,
         CancellationToken cancellationToken = default)
     {
-        var profile = Find(profileId);
-        var bindings = profile.LastSuccessfulIdentityBindings
-            .Where(binding => !string.Equals(binding.DisplayId, displayId, StringComparison.OrdinalIgnoreCase))
-            .Append(new IdentityBinding(displayId, runtimeId))
-            .ToArray();
-        return ReplaceAsync(profile with { LastSuccessfulIdentityBindings = bindings }, cancellationToken);
+        ArgumentNullException.ThrowIfNull(selected);
+        var snapshot = await captureService.CaptureAsync(cancellationToken).ConfigureAwait(false);
+        var connected = snapshot.ConnectedDisplays.SingleOrDefault(display =>
+            string.Equals(display.RuntimeId, selected.RuntimeId, StringComparison.Ordinal) && display.Identity == selected.Identity)
+            ?? throw new InvalidOperationException("The selected display is no longer connected. Refresh the display list and try again.");
+        await ReplaceAsync(profileId, profile =>
+        {
+            if (!profile.Displays.Any(display => string.Equals(display.DisplayId, displayId, StringComparison.OrdinalIgnoreCase)))
+                throw new KeyNotFoundException("The saved display does not exist.");
+            var bindings = profile.LastSuccessfulIdentityBindings
+                .Where(binding => !string.Equals(binding.DisplayId, displayId, StringComparison.OrdinalIgnoreCase))
+                .Append(new IdentityBinding(displayId, selected.RuntimeId) { Identity = connected.Identity }).ToArray();
+            return profile with { LastSuccessfulIdentityBindings = bindings };
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public Task DeleteAsync(Guid profileId, CancellationToken cancellationToken = default) =>
@@ -145,26 +150,24 @@ public sealed class ProfileManagementService(
         }, cancellationToken);
     }
 
-    private Task ReplaceAsync(DisplayProfile updated, CancellationToken cancellationToken)
+    private async Task<DisplayProfile> ReplaceAsync(Guid profileId, Func<DisplayProfile, DisplayProfile> update, CancellationToken cancellationToken)
     {
-        var candidate = configuration.Current with
+        DisplayProfile? updated = null;
+        await configuration.UpdateAsync(current =>
         {
-            Profiles = configuration.Current.Profiles.Select(profile => profile.Id == updated.Id ? updated : profile).ToArray(),
-        };
-        var errors = ConfigurationValidator.Validate(candidate);
-        if (errors.Count > 0)
-        {
-            throw new ConfigurationValidationException(errors);
-        }
-
-        return configuration.UpdateAsync(_ => candidate, cancellationToken);
+            var existing = current.Profiles.FirstOrDefault(profile => profile.Id == profileId)
+                ?? throw new KeyNotFoundException("The profile does not exist.");
+            updated = update(existing);
+            return current with { Profiles = current.Profiles.Select(profile => profile.Id == profileId ? updated : profile).ToArray() };
+        }, cancellationToken).ConfigureAwait(false);
+        return updated!;
     }
 
     private DisplayProfile Find(Guid profileId) =>
         configuration.Current.Profiles.FirstOrDefault(profile => profile.Id == profileId)
         ?? throw new KeyNotFoundException("The profile does not exist.");
 
-    private void EnsureUniqueName(string name, Guid? exceptProfileId)
+    private static void EnsureUniqueName(MoniTopo.Core.Configuration.ApplicationConfiguration current, string name, Guid? exceptProfileId)
     {
         var trimmed = name.Trim();
         if (trimmed.Length is < 1 or > 64)
@@ -173,7 +176,7 @@ public sealed class ProfileManagementService(
                 [new ValidationError("profile.name.length", "Profile names must contain 1 to 64 characters.")]);
         }
 
-        if (configuration.Current.Profiles.Any(profile =>
+        if (current.Profiles.Any(profile =>
                 profile.Id != exceptProfileId && string.Equals(profile.Name.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ConfigurationValidationException(

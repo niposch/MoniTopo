@@ -21,13 +21,20 @@ public static class ProfileValidator
     public static IReadOnlyList<ValidationError> Validate(DisplayProfile profile)
     {
         var errors = new List<ValidationError>();
-        var trimmedName = profile.Name.Trim();
+        if (profile is null)
+            return [new("profile.null", "A profile must not be null.")];
+        var trimmedName = profile.Name?.Trim() ?? string.Empty;
         if (trimmedName.Length is < 1 or > 64)
         {
             errors.Add(new ValidationError("profile.name.length", "Profile names must contain 1 to 64 characters."));
         }
 
-        if (profile.Displays.Count == 0)
+        if (profile.Id == Guid.Empty)
+            errors.Add(new("profile.id.invalid", "A profile requires a non-empty identifier."));
+        if (profile.LastSuccessfulIdentityBindings is null || profile.LastSuccessfulIdentityBindings.Any(binding =>
+            binding is null || string.IsNullOrWhiteSpace(binding.DisplayId) || string.IsNullOrWhiteSpace(binding.RuntimeIdentityKey)))
+            errors.Add(new("profile.bindings.invalid", "Profile identity bindings are incomplete."));
+        if (profile.Displays is null || profile.Displays.Count == 0 || profile.Displays.Any(display => display is null))
         {
             errors.Add(new ValidationError("profile.displays.empty", "A profile must contain at least one active display."));
             return errors;
@@ -70,10 +77,19 @@ public static class ProfileValidator
                 errors.Add(new ValidationError("profile.display.scale", $"{display.FriendlyLabel} has an unsupported Windows scale value."));
             }
 
-            if (!display.Identity.HasAnySignal)
+            if (display.Identity is null || !display.Identity.HasAnySignal)
             {
                 errors.Add(new ValidationError("profile.display.identity", $"{display.FriendlyLabel} has no usable identity information."));
             }
+
+            if (!Enum.IsDefined(display.Orientation) || !Enum.IsDefined(display.PathScaling))
+                errors.Add(new("profile.display.mode", "A display has an invalid orientation or path scaling value."));
+            if (display.TargetSignal is { IsValid: false } || profile.CaptureSchemaVersion >= 4 && display.TargetSignal is null)
+                errors.Add(new("profile.display.signal", "A display has missing or invalid target signal data."));
+            if (display.DesktopImage is { IsValid: false })
+                errors.Add(new("profile.display.desktopImage", "A display has invalid desktop image data."));
+            if (profile.CaptureSchemaVersion >= 4 && display.BoostRefreshRate is null)
+                errors.Add(new("profile.display.boost", "A display has no captured refresh boost state."));
         }
 
         return errors;
@@ -88,6 +104,10 @@ public static class ConfigurationValidator
     public static IReadOnlyList<ValidationError> Validate(ApplicationConfiguration configuration)
     {
         var errors = new List<ValidationError>();
+        if (configuration is null || configuration.ApplicationSettings is null ||
+            configuration.ApplicationSettings.PopupHotkey is null || configuration.Profiles is null ||
+            configuration.ProfileOrder is null || configuration.Profiles.Any(profile => profile is null))
+            return [new("configuration.shape", "The configuration has missing or null required members.")];
         if (configuration.SchemaVersion != ApplicationConfiguration.CurrentSchemaVersion)
         {
             errors.Add(new ValidationError("configuration.schema", "The configuration schema is not supported."));
@@ -99,7 +119,7 @@ public static class ConfigurationValidator
         }
 
         var duplicateName = configuration.Profiles
-            .GroupBy(profile => profile.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(profile => profile.Name?.Trim() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicateName is not null)
         {
@@ -107,6 +127,8 @@ public static class ConfigurationValidator
         }
 
         var profileIds = configuration.Profiles.Select(profile => profile.Id).ToArray();
+        if (profileIds.Distinct().Count() != profileIds.Length)
+            errors.Add(new("profile.id.duplicate", "Profile identifiers must be unique."));
         if (configuration.ProfileOrder.Count != profileIds.Length ||
             configuration.ProfileOrder.Distinct().Count() != configuration.ProfileOrder.Count ||
             configuration.ProfileOrder.Any(id => !profileIds.Contains(id)))

@@ -97,6 +97,27 @@ public sealed class PopupViewModelTests
         Assert.Equal("Download failed", viewModel.StatusMessage);
     }
 
+    [Fact]
+    public void DerivedStateRefreshUpdatesOpenPopupWithoutResettingBusyStatusOrSelection()
+    {
+        var desktop = Profile("Desktop", 1);
+        var movie = Profile("Movie", 2);
+        var viewModel = new PopupViewModel();
+        viewModel.Load([desktop, movie], desktop.Id);
+        viewModel.SelectedIndex = 1;
+        viewModel.BeginActivation("Movie");
+
+        viewModel.RefreshProfiles([movie, desktop], null);
+
+        Assert.Equal("Custom", viewModel.CurrentState);
+        Assert.Equal(movie.Id, viewModel.SelectedProfile?.Id);
+        Assert.True(viewModel.IsBusy);
+        Assert.Equal("Activating Movie…", viewModel.StatusMessage);
+        Assert.DoesNotContain(viewModel.Profiles, profile => profile.IsActive);
+        viewModel.Load([movie, desktop], null);
+        Assert.True(viewModel.IsBusy);
+    }
+
     private static DisplayProfile Profile(string name, int index)
     {
         var identity = new MonitorIdentityFingerprint(

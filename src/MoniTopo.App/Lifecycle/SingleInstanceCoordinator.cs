@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Security.Principal;
@@ -12,12 +13,14 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
     private readonly string _pipeName;
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _listener;
+    private readonly TimeSpan _commandTimeout;
 
-    private SingleInstanceCoordinator(Semaphore instanceSemaphore, string pipeName, bool isPrimary)
+    private SingleInstanceCoordinator(Semaphore instanceSemaphore, string pipeName, bool isPrimary, TimeSpan commandTimeout)
     {
         _instanceSemaphore = instanceSemaphore;
         _pipeName = pipeName;
         IsPrimary = isPrimary;
+        _commandTimeout = commandTimeout;
     }
 
     public bool IsPrimary { get; }
@@ -26,14 +29,16 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
 
     public static SingleInstanceCoordinator CreateForCurrentUser() => CreateForCurrentUser(DefaultApplicationId);
 
-    internal static SingleInstanceCoordinator CreateForCurrentUser(string applicationId)
+    internal string PipeName => _pipeName;
+
+    internal static SingleInstanceCoordinator CreateForCurrentUser(string applicationId, TimeSpan? commandTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
         var user = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("The current Windows user has no SID.");
-        var suffix = user.Replace("-", "_", StringComparison.Ordinal);
+        var suffix = $"{user.Replace("-", "_", StringComparison.Ordinal)}.Session{Process.GetCurrentProcess().SessionId}";
         var instanceSemaphore = new Semaphore(1, 1, $"Local\\{applicationId}.{suffix}");
         var isPrimary = instanceSemaphore.WaitOne(TimeSpan.Zero);
-        return new SingleInstanceCoordinator(instanceSemaphore, $"{applicationId}.{suffix}", isPrimary);
+        return new SingleInstanceCoordinator(instanceSemaphore, $"{applicationId}.{suffix}", isPrimary, commandTimeout ?? TimeSpan.FromSeconds(1));
     }
 
     public void StartListening()
@@ -112,15 +117,21 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-                var command = await SingleInstancePipeProtocol.ReadCommandAsync(pipe, cancellationToken).ConfigureAwait(false);
+                using var commandDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                commandDeadline.CancelAfter(_commandTimeout);
+                var command = await SingleInstancePipeProtocol.ReadCommandAsync(pipe, commandDeadline.Token).ConfigureAwait(false);
                 var accepted = string.Equals(command, "open", StringComparison.Ordinal);
                 if (accepted)
                 {
                     OpenRequested?.Invoke(this, EventArgs.Empty);
                 }
 
-                await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, cancellationToken).ConfigureAwait(false);
-                await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
+                await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, commandDeadline.Token).ConfigureAwait(false);
+                await pipe.FlushAsync(commandDeadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A stalled client must not monopolize the sole listener.
             }
             catch (IOException) when (!cancellationToken.IsCancellationRequested)
             {

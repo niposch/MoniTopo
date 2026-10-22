@@ -158,6 +158,9 @@ internal struct NativePathInfo
             out index);
 
     internal readonly bool HasDesktopModeReference(NativeModeInfo[] modes) =>
+        // A valid direct legacy index of zero also has a zero virtual high half;
+        // that coincidence must not invent a desktop-image reference at index zero.
+        (SupportsVirtualMode || !MatchesMode(modes, TargetInfo.ModeInfoIndex, expectedType: 2, TargetInfo.AdapterId, TargetInfo.Id)) &&
         TargetInfo.DesktopModeInfoIndex != NativeDisplayConfigModeIndexes.InvalidVirtualIndex &&
         TryResolveTargetModeInfoIndex(modes, out var targetIndex) &&
         targetIndex == TargetInfo.TargetModeInfoIndex;

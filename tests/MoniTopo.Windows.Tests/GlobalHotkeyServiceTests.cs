@@ -85,6 +85,40 @@ public sealed class GlobalHotkeyServiceTests
         Assert.Equal([1, 2], native.UnregisterCalls.Order());
     }
 
+    [Fact]
+    public void FailedReregistrationCanBeRetriedWithTheSameBinding()
+    {
+        var native = new FakeHotkeyNative();
+        using var service = new GlobalHotkeyService((nint)42, native);
+        var id = Guid.NewGuid();
+        var binding = new HotkeyBinding(HotkeyModifiers.Control, 0x32);
+        service.RegisterProfile(id, binding);
+        service.SetProfileHotkeysEnabled(false);
+        native.RejectedVirtualKey = 0x32;
+        Assert.False(Assert.Single(service.SetProfileHotkeysEnabled(true)).Succeeded);
+        native.RejectedVirtualKey = null;
+
+        Assert.True(service.RegisterProfile(id, binding).Succeeded);
+        Assert.True(service.ProcessWindowMessage(0x0312, (nint)2));
+    }
+
+    [Fact]
+    public void WrongThreadRegistrationIsRejectedBeforeCallingNativeCode()
+    {
+        var native = new FakeHotkeyNative();
+        using var service = new GlobalHotkeyService((nint)42, native);
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            failure = Record.Exception(() => service.RegisterPopup(new HotkeyBinding(HotkeyModifiers.Control, 0x32)));
+        });
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(5)));
+
+        Assert.IsType<InvalidOperationException>(failure);
+        Assert.Empty(native.RegisterCalls);
+    }
+
     private sealed class FakeHotkeyNative : IGlobalHotkeyNative
     {
         internal List<(int Id, uint Modifiers, uint VirtualKey)> RegisterCalls { get; } = [];
@@ -104,5 +138,38 @@ public sealed class GlobalHotkeyServiceTests
             UnregisterCalls.Add(id);
             return true;
         }
+    }
+
+    [Fact]
+    public void ReplacementWhileSuppressedStillChecksWindowsAndRetainsOldBindingOnConflict()
+    {
+        var native = new FakeHotkeyNative();
+        using var service = new GlobalHotkeyService((nint)42, native);
+        var profile = Guid.NewGuid();
+        service.RegisterProfile(profile, new HotkeyBinding(HotkeyModifiers.Control, 0x31));
+        service.SetProfileHotkeysEnabled(false);
+        native.RejectedVirtualKey = 0x32;
+
+        var result = service.RegisterProfile(profile, new HotkeyBinding(HotkeyModifiers.Control, 0x32));
+
+        Assert.False(result.Succeeded);
+        Assert.True(Assert.Single(service.SetProfileHotkeysEnabled(true)).Succeeded);
+        Assert.Equal(new uint[] { 0x31, 0x32, 0x31 }, native.RegisterCalls.Select(call => call.VirtualKey));
+    }
+
+    [Fact]
+    public void AcceptedReplacementProbeDoesNotEnableHotkeyUntilInteractionEnds()
+    {
+        var native = new FakeHotkeyNative();
+        using var service = new GlobalHotkeyService((nint)42, native);
+        var profile = Guid.NewGuid();
+        service.RegisterProfile(profile, new HotkeyBinding(HotkeyModifiers.Control, 0x31));
+        service.SetProfileHotkeysEnabled(false);
+
+        Assert.True(service.RegisterProfile(profile, new HotkeyBinding(HotkeyModifiers.Control, 0x32)).Succeeded);
+        Assert.False(service.ProcessWindowMessage(0x0312, (nint)2));
+        Assert.True(Assert.Single(service.SetProfileHotkeysEnabled(true)).Succeeded);
+        Assert.True(service.ProcessWindowMessage(0x0312, (nint)2));
+        Assert.Equal(new uint[] { 0x31, 0x32, 0x32 }, native.RegisterCalls.Select(call => call.VirtualKey));
     }
 }

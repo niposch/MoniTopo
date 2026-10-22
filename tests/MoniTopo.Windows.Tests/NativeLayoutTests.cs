@@ -87,6 +87,8 @@ public sealed class NativeLayoutTests
         Assert.Equal(0u, directTarget);
         Assert.Equal(1u, packedSource);
         Assert.Equal(0u, packedTarget);
+        Assert.False(direct.HasDesktopModeReference(modes));
+        Assert.False(direct.TryResolveDesktopModeInfoIndex(modes, out _));
     }
 
     [Fact]

@@ -6,7 +6,8 @@
         Height="245"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
-        ShowInTaskbar="True">
+        ShowInTaskbar="True"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

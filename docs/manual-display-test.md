@@ -1,11 +1,13 @@
 # Manual display acceptance
 
-Run this checklist only on the release-candidate installer, with a keyboard path available on every intended display. These tests intentionally change the real desktop and are deferred until the user receives the release candidate.
+Run this checklist manually on the build being evaluated, with a keyboard path available on every intended display. Rider and installed builds must be tested separately. Profile activation changes the real desktop; automated tests use synthetic profiles and fake display writers instead.
+
+Local validation on 22 October 2026 completed two round trips between the existing one- and two-display profiles and one deliberate pre-HDR failure with exact rollback. The original captured setup was verified after each run. This does not certify other monitors, docks, clones, DRR, mixed-DPI placement, or the installed update flow; the remaining checklist still applies.
 
 ## Preparation
 
 - Record the current Windows display arrangement in screenshots or notes.
-- Confirm the recovery companion is installed beside `MoniTopo.exe`.
+- Confirm `MoniTopo.Recovery.exe` is beside `MoniTopo.App.exe` in the build or install directory.
 - Start MoniTopo through the explicit manual-test path with `MONITOPO_ALLOW_REAL_DISPLAY_CHANGES=1` set by the tester.
 - Keep Windows Display Settings available. Do not create an intentionally all-displays-off configuration.
 
@@ -18,6 +20,9 @@ Run this checklist only on the release-candidate installer, with a keyboard path
 - Confirm Desktop restores the intended primary display and active desk-monitor set.
 - For each profile, compare position, clone/extended topology, resolution, exact friendly refresh rate, orientation, Windows scale, and HDR with its captured state.
 - Exercise available 100%, 150%, and 300% scale values, including popup keyboard use at 300% DPI on a 4K display.
+- Repeat switching in both directions several times, including a profile that enables a currently inactive monitor. Confirm the active indicator agrees with Windows after each switch.
+- After a switch, use another profile hotkey without restarting MoniTopo; it must still work.
+- If existing profiles predate complete virtual-mode capture, update each from its intended Windows setup before evaluating virtual desktop-image or dynamic-refresh restoration.
 
 ## Missing, extra, and changed displays
 
@@ -26,6 +31,8 @@ Run this checklist only on the release-candidate installer, with a keyboard path
 - Enable an extra display; the current state must become Custom.
 - Change one managed setting manually in Windows; state must become Custom and MoniTopo must not revert it automatically.
 - If the hardware permits, connect two indistinguishable same-model monitors and confirm MoniTopo requests a manual binding instead of guessing.
+- Reconnect or change a connector after remembering a binding. A different monitor with a conflicting serial must not silently inherit that binding.
+- Leave the popup open while changing a managed setting in Windows; its state and tray tooltip should follow the observed setup.
 
 ## Lifecycle and layout
 
@@ -34,17 +41,24 @@ Run this checklist only on the release-candidate installer, with a keyboard path
 - Test the popup with bottom, top, left, and right taskbar positions where Windows permits them.
 - Test popup placement and keyboard operation on each monitor in a mixed-DPI setup; confirm it remains inside the work area.
 - Enable run at login, sign out/in, and confirm background startup does not open the main window. Disable it and repeat.
+- Enable the show-window preference and compare an ordinary launch with a `--background` launch. Only the ordinary launch should honor that preference.
+- Reorder profiles in the main window and confirm the popup uses the same order.
+- Tab to the popup's Open MoniTopo and update buttons and press Enter. Each must invoke its own action without activating a profile.
+- Confirm the main window can be restored on a secondary monitor and the popup remains usable after changing the primary monitor or DPI.
 
 ## Recovery
 
-- Use the documented synthetic/manual-test failure injection after temporary topology application. Confirm the prior setup is restored and the failure is reported.
-- Repeat with the main process terminated after the recovery-ready signal, using a safe working profile rather than an all-displays-off payload. Confirm the companion restores the prior state and MoniTopo reports the saved result on next launch.
+- Run the automated recovery protocol tests with fake writers first. They must cover slow/incomplete activation, main-process disappearance, failed rollback, fallback, and two transactions competing for writer ownership.
+- Do not point synthetic recovery payloads at the real desktop or fabricate an all-displays-off configuration. Real failure injection requires a separately reviewed manual path and a known working rollback setup.
+- If a real activation fails, confirm the message distinguishes a restored setup, an emergency fallback, and unresolved recovery. An unresolved recovery must retain its evidence.
+- After a companion recovery, restart MoniTopo and confirm it reports the saved outcome. Acknowledging the notice must not silently delete an unresolved rollback snapshot.
 
 ## Installer and update
 
 - Install per-user without administrator rights; record the expected unsigned SmartScreen warning.
 - Confirm Start Menu launch, first-run autostart choice, repair/reinstall behavior, and uninstall cleanup including the startup entry.
 - Check for an update against a draft test release. Confirm checks do not download automatically, clicking the popup update hint starts the download, and the staged update is applied by either **Restart now** or the next application launch.
+- After a download, run Check for updates again; Restart now must remain available for the staged update. Leave an installed copy running across a daily interval and confirm automatic checks continue without restarting the app.
 - Confirm the installed and portable builds display the expected date-formatted version.
 
 Record Windows version, GPU/driver, display models, connection types, and pass/fail notes without committing real monitor identifiers, EDID data, screenshots, or logs to the repository.

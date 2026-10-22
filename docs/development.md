@@ -24,7 +24,7 @@ Run the WPF project with `dotnet run --project src/MoniTopo.App`. Normal launche
 
 Unpackaged Rider/CLI builds use the repository's default package version and show its date form with a `dev` suffix. They do not participate in Velopack update checks because `UpdateManager.IsInstalled` is false. Installed builds take their package version from Velopack. Both write to the same local log directory and identify their channel and complete build version in the first record. Fully exit an installed tray instance before launching from Rider because single-instance coordination is intentionally shared.
 
-Profiles captured by builds before capture schema 3 must be updated from the current Windows setup before activation. Those builds stored generic Advanced Color activity instead of the Windows HDR user toggle, so MoniTopo cannot infer the correct saved HDR state during migration.
+Profiles captured by builds before capture schema 3 must be updated from the current Windows setup before activation. Those builds stored generic Advanced Color activity instead of the Windows HDR user toggle, so MoniTopo cannot infer the correct saved HDR state during migration. New captures use schema 4 to retain virtual desktop-image and refresh-boost metadata. Schema-3 profiles remain activatable; recapture them to gain the additional fidelity checks.
 
 The solution separates portable domain code (`MoniTopo.Core`), Windows integration (`MoniTopo.Windows`), WPF UI (`MoniTopo.App`), and the recovery companion (`MoniTopo.Recovery`). Test projects contain no real display mutation path.
 
@@ -32,7 +32,11 @@ The Windows tests construct CCD path/mode arrays, rollback files, EDID bytes, HD
 
 WPF startup smoke tests show and lay out the first-run, popup, and main windows on STA threads with fake configuration and update services. These tests catch invalid binding modes without invoking a display writer.
 
-CI enforces at least 85% line coverage for `MoniTopo.Core`. `eng/Test-CoreCoverage.ps1` reads the isolated Core Cobertura report; the current local baseline is 88.69%. Windows and application coverage is retained as an artifact for review but is not used to hide platform or UI code behind exclusions.
+CI enforces at least 85% line coverage for `MoniTopo.Core`. `eng/Test-CoreCoverage.ps1` reads the isolated Core Cobertura report. Windows and application coverage is retained as an artifact for review but is not used to hide platform or UI code behind exclusions.
+
+Recovery tests use synthetic payloads, isolated event/lease names, fake process handles, and fake native writers. They cover takeover, PID reuse, held leases, completion at the deadline, unsuccessful recovery, and pending-result reporting without terminating a real process or changing a display. Recovery has one writer lease per recovery root, not just per transaction. Never remove that ownership handshake to make a timeout test pass.
+
+Malformed configuration is left in place and copied to a timestamped corruption file. Startup can explicitly restore a validated `config.json.bak`; it never silently discards profiles. Do not delete either file as a debugging shortcut. The app reports and acknowledges pending recovery results on startup while retaining unresolved rollback evidence.
 
 ## Local packaging
 
@@ -51,5 +55,8 @@ Replace the sample version with the release date/revision. Outputs include the p
 - Start with the focused conversion or facade test for the failing API. Tests accept synthetic native structures and report translated Win32 codes without changing displays.
 - Read the newest bounded log under `%LocalAppData%\MoniTopo\logs`; development and installed builds use this same directory, every primary-process log starts with its build identity, logs retain at most seven 1 MiB files, and they contain no telemetry. A rejected CCD plan records non-identifying path flags, mode indices, dimensions, positions, and signal timing, but omits adapter/target IDs and monitor identity data.
 - CCD buffer changes during capture are expected and retried. Repeated failures should be investigated with the native error code in the log and the documented `QueryDisplayConfig` contract.
+- Identity and mode investigations must use synthetic fixtures. Remembered bindings include the physical fingerprint; a runtime adapter/target ID alone is not permission to select a panel. Legacy runtime-only remembered bindings are ignored and may need confirmation again.
+- The recovery companion can end the original MoniTopo process if it remains blocked inside a native display call beyond the ownership grace period. It checks PID and creation time and confirms exit before acquiring the writer lease. Failed ownership acquisition retains recovery evidence and never permits a competing write.
+- Velopack's update-check API has no cancellation parameter. Shutdown waits for an in-flight SDK check instead of detaching it, so an unavailable network can delay exit until the SDK timeout.
 - A Rider or Visual Studio XAML designer warning about `Application.ThemeMode` is suppressed only as `WPF0001` in the WPF project because the built-in Fluent System theme remains experimental in .NET 10.
 - Do not enable the real-display opt-in merely to debug marshalling, conversion, identity, recovery, HDR, or scaling. Each of those paths has a fake-backed focused test.

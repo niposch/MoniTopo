@@ -22,9 +22,17 @@ public static class TrayPopupPlacement
         uint dpi,
         int marginPixels = 8)
     {
-        if (dpi == 0 || popupSize.Width <= 0 || popupSize.Height <= 0 || workArea.Width <= 0 || workArea.Height <= 0)
+        var position = CalculatePixels(anchor, workArea, popupSize, marginPixels);
+        ArgumentOutOfRangeException.ThrowIfZero(dpi);
+        var scale = 96d / dpi;
+        return new PopupPlacement(position.X * scale, position.Y * scale);
+    }
+
+    public static PixelPoint CalculatePixels(PixelRect anchor, PixelRect workArea, PixelSize popupSize, int marginPixels = 8)
+    {
+        if (popupSize.Width <= 0 || popupSize.Height <= 0 || workArea.Width <= 0 || workArea.Height <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(dpi), "Placement requires positive dimensions and DPI.");
+            throw new ArgumentOutOfRangeException(nameof(popupSize), "Placement requires positive dimensions.");
         }
 
         var left = anchor.Right - popupSize.Width;
@@ -37,8 +45,7 @@ public static class TrayPopupPlacement
         var minimumTop = workArea.Top + marginPixels;
         var maximumTop = Math.Max(minimumTop, workArea.Bottom - popupSize.Height - marginPixels);
         top = Math.Clamp(top, minimumTop, maximumTop);
-        var scale = 96d / dpi;
-        return new PopupPlacement(left * scale, top * scale);
+        return new PixelPoint(left, top);
     }
 
     public static PixelRect DefaultNotificationAnchor(PixelRect screenBounds, PixelRect workArea)
@@ -59,6 +66,8 @@ public static class TrayPopupPlacement
             return new PixelRect(workArea.Right, workArea.Bottom - anchorSize, workArea.Right + anchorSize, workArea.Bottom);
         }
 
-        return new PixelRect(workArea.Left - anchorSize, workArea.Bottom - anchorSize, workArea.Left, workArea.Bottom);
+        return workArea.Left > screenBounds.Left
+            ? new PixelRect(workArea.Left - anchorSize, workArea.Bottom - anchorSize, workArea.Left, workArea.Bottom)
+            : new PixelRect(workArea.Right - anchorSize, workArea.Bottom - anchorSize, workArea.Right, workArea.Bottom);
     }
 }

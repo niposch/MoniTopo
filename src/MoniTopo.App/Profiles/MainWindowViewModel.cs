@@ -11,21 +11,25 @@ using MoniTopo.Core.Updates;
 
 namespace MoniTopo.App.Profiles;
 
-public sealed class MainWindowViewModel : INotifyPropertyChanged
+public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly ConfigurationSession _configuration;
     private readonly UpdateCoordinator _updates;
+    private readonly IUiDispatcher _dispatcher;
+    private bool _disposed;
     private DisplayProfile? _selectedProfile;
     private string? _statusMessage;
     private bool _isBusy;
+    private bool _activationBusy;
     private double _previewWidth = 560;
     private double _previewHeight = 260;
     private UpdateState _updateState;
 
-    public MainWindowViewModel(ConfigurationSession configuration, UpdateCoordinator updates)
+    public MainWindowViewModel(ConfigurationSession configuration, UpdateCoordinator updates, IUiDispatcher? dispatcher = null)
     {
         _configuration = configuration;
         _updates = updates;
+        _dispatcher = dispatcher ?? new ImmediateUiDispatcher();
         _updateState = updates.Current;
         _configuration.Changed += OnConfigurationChanged;
         _updates.Changed += OnUpdateChanged;
@@ -65,8 +69,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool IsBusy
     {
-        get => _isBusy;
-        set => SetField(ref _isBusy, value);
+        get => _isBusy || _activationBusy;
+        set
+        {
+            if (SetField(ref _isBusy, value))
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanInteract)));
+            }
+        }
+    }
+
+    public bool CanInteract => !IsBusy;
+
+    public void SetActivationBusy(bool busy)
+    {
+        _activationBusy = busy;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanInteract)));
     }
 
     public bool RunAtLogin => _configuration.Current.ApplicationSettings.RunAtLogin;
@@ -94,6 +113,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public void Dispose()
+    {
+        _disposed = true;
+        _configuration.Changed -= OnConfigurationChanged;
+        _updates.Changed -= OnUpdateChanged;
+    }
+
     public void SetPreviewSize(double width, double height)
     {
         _previewWidth = Math.Max(100, width);
@@ -103,28 +129,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void OnConfigurationChanged(object? sender, ApplicationConfiguration configuration)
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        _ = _dispatcher.InvokeAsync(() =>
         {
-            dispatcher.BeginInvoke(() => Reload(configuration));
-        }
-        else
-        {
-            Reload(configuration);
-        }
+            if (!_disposed) Reload(_configuration.Current);
+        });
     }
 
     private void OnUpdateChanged(object? sender, UpdateState state)
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        _ = _dispatcher.InvokeAsync(() =>
         {
-            dispatcher.BeginInvoke(() => ApplyUpdateState(state));
-        }
-        else
-        {
-            ApplyUpdateState(state);
-        }
+            if (!_disposed) ApplyUpdateState(_updates.Current);
+        });
     }
 
     private void ApplyUpdateState(UpdateState state)

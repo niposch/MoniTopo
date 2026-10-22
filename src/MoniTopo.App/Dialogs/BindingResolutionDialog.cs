@@ -30,6 +30,7 @@ public sealed class BindingResolutionDialog : Window
             {
                 DisplayId = saved.DisplayId;
                 RuntimeId = connected.RuntimeId;
+                SelectedDisplay = connected;
                 DialogResult = true;
             }
         };
@@ -50,4 +51,6 @@ public sealed class BindingResolutionDialog : Window
     public string? DisplayId { get; private set; }
 
     public string? RuntimeId { get; private set; }
+
+    public ConnectedDisplayState? SelectedDisplay { get; private set; }
 }

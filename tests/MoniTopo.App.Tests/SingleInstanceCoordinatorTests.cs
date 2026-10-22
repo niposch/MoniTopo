@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using MoniTopo.App.Lifecycle;
 
 namespace MoniTopo.App.Tests;
@@ -33,6 +34,21 @@ public sealed class SingleInstanceCoordinatorTests
         var command = await SingleInstancePipeProtocol.ReadCommandAsync(stream, CancellationToken.None);
 
         Assert.Equal("open", command);
+    }
+
+    [Fact]
+    public async Task StalledConnectionExpiresAndNextLaunchCanOpenWindow()
+    {
+        var applicationId = $"MoniTopo.Tests.{Guid.NewGuid():N}";
+        await using var primary = SingleInstanceCoordinator.CreateForCurrentUser(applicationId, TimeSpan.FromMilliseconds(100));
+        primary.StartListening();
+        await using var stalled = new NamedPipeClientStream(".", primary.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await stalled.ConnectAsync(CancellationToken.None);
+        await Task.Delay(200);
+        await using var secondary = SingleInstanceCoordinator.CreateForCurrentUser(applicationId);
+
+        Assert.True(await secondary.SignalPrimaryAsync());
+        Assert.Contains($".Session{System.Diagnostics.Process.GetCurrentProcess().SessionId}", primary.PipeName, StringComparison.Ordinal);
     }
 
     private sealed class FragmentedReadStream(params string[] fragments) : MemoryStream(

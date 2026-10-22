@@ -12,6 +12,9 @@ public sealed class DisplayStateRefreshService : IAsyncDisposable
     private CancellationTokenSource? _pendingDebounce;
     private bool _sessionLocked;
     private bool _shuttingDown;
+    private int _activeOperations;
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _disposeTask;
 
     public DisplayStateRefreshService(
         Func<CancellationToken, Task> refresh,
@@ -46,7 +49,7 @@ public sealed class DisplayStateRefreshService : IAsyncDisposable
             token = _pendingDebounce.Token;
         }
 
-        return DebounceAndRefreshAsync(token);
+        return TrackAsync(() => DebounceAndRefreshAsync(token));
     }
 
     public void SetSessionLocked(bool isLocked)
@@ -61,19 +64,37 @@ public sealed class DisplayStateRefreshService : IAsyncDisposable
     {
         lock (_sync)
         {
+            if (_shuttingDown)
+            {
+                return;
+            }
+
             _shuttingDown = true;
             _pendingDebounce?.Cancel();
+            if (_activeOperations == 0)
+            {
+                _drained.TrySetResult();
+            }
         }
     }
 
     public Task RunConsistencyCheckAsync(CancellationToken cancellationToken = default) =>
-        RefreshIfAllowedAsync(cancellationToken);
+        TrackAsync(() => RefreshIfAllowedAsync(cancellationToken));
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        lock (_sync)
+        {
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        }
+    }
+
+    private async Task DisposeCoreAsync()
     {
         BeginShutdown();
         _lifetime.Cancel();
         await _fallbackTimer.DisposeAsync().ConfigureAwait(false);
+        await _drained.Task.ConfigureAwait(false);
         _pendingDebounce?.Dispose();
         _lifetime.Dispose();
         _refreshGate.Dispose();
@@ -101,14 +122,15 @@ public sealed class DisplayStateRefreshService : IAsyncDisposable
             }
         }
 
-        if (!await _refreshGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        if (!await _refreshGate.WaitAsync(0, linked.Token).ConfigureAwait(false))
         {
             return;
         }
 
         try
         {
-            await _refresh(cancellationToken).ConfigureAwait(false);
+            await _refresh(linked.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -118,6 +140,43 @@ public sealed class DisplayStateRefreshService : IAsyncDisposable
 
     private void OnFallbackTimer()
     {
-        _ = RefreshIfAllowedAsync(_lifetime.Token);
+        _ = TrackAsync(() => RefreshIfAllowedAsync(_lifetime.Token));
+    }
+
+    private Task TrackAsync(Func<Task> operation)
+    {
+        lock (_sync)
+        {
+            if (_shuttingDown)
+            {
+                return Task.CompletedTask;
+            }
+
+            _activeOperations++;
+        }
+
+        return RunTrackedAsync(operation);
+    }
+
+    private async Task RunTrackedAsync(Func<Task> operation)
+    {
+        try
+        {
+            await operation().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                _activeOperations--;
+                if (_shuttingDown && _activeOperations == 0)
+                {
+                    _drained.TrySetResult();
+                }
+            }
+        }
     }
 }

@@ -24,7 +24,7 @@
             <TextBlock Text="MoniTopo" FontSize="22" FontWeight="SemiBold" />
         </DockPanel>
 
-        <TabControl x:Name="MainNavigation" Grid.Row="1">
+        <TabControl x:Name="MainNavigation" Grid.Row="1" IsEnabled="{Binding CanInteract}">
             <TabItem Header="Profiles">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
@@ -40,11 +40,15 @@
                         <StackPanel>
                             <TextBlock Text="Display profiles" FontSize="18" FontWeight="SemiBold" />
                             <TextBlock Text="Capture the setup configured in Windows, then switch to it from the tray."
-                                       Opacity="0.7" />
+                                       Opacity="0.7" TextWrapping="Wrap" />
                         </StackPanel>
                     </DockPanel>
 
-                    <Grid Grid.Row="1">
+                    <Grid x:Name="ProfileBody" Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="0" />
+                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="240" />
                             <ColumnDefinition Width="18" />
@@ -59,7 +63,7 @@
                             <ListBox ItemsSource="{Binding Profiles}"
                                      SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
                                      DisplayMemberPath="Name"
-                                     MinHeight="160"
+                                     MinHeight="60"
                                      AutomationProperties.Name="Saved display profiles" />
                             <WrapPanel Grid.Row="1" Margin="0,8,0,0">
                                 <Button Content="↑" Width="34" Margin="0,0,6,6" Click="OnMoveUpClick" AutomationProperties.Name="Move profile up" />
@@ -69,7 +73,7 @@
                             </WrapPanel>
                         </Grid>
 
-                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer x:Name="ProfileDetails" Grid.Column="2" VerticalScrollBarVisibility="Auto">
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,8">
                                     <Button DockPanel.Dock="Right"

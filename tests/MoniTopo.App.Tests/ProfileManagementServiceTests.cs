@@ -83,11 +83,11 @@ public sealed class ProfileManagementServiceTests
         fixture.Capture.Snapshot = Snapshot(Display("display-2", "SERIAL-2"));
         var second = (await fixture.Service.SaveCurrentAsync("Movie")).Profile;
         await fixture.Service.MoveAsync(second.Id, -1);
-        await fixture.Service.RememberBindingAsync(first.Id, first.Displays[0].DisplayId, "runtime-remembered");
+        await fixture.Service.RememberBindingAsync(first.Id, first.Displays[0].DisplayId, fixture.Capture.Snapshot.ConnectedDisplays[0]);
         await fixture.Service.DeleteAsync(second.Id);
 
         Assert.Equal([first.Id], fixture.Session.Current.ProfileOrder);
-        Assert.Equal("runtime-remembered", Assert.Single(fixture.Session.Current.Profiles[0].LastSuccessfulIdentityBindings).RuntimeIdentityKey);
+        Assert.Equal("runtime-1", Assert.Single(fixture.Session.Current.Profiles[0].LastSuccessfulIdentityBindings).RuntimeIdentityKey);
     }
 
     private static DesiredDisplayPath Display(string id, string? serial = null)
@@ -121,6 +121,7 @@ public sealed class ProfileManagementServiceTests
             true,
             "Synthetic panel")
         {
+            BoostRefreshRate = false,
             TargetSignal = new DisplayTargetSignal(
                 241_500_000,
                 new RefreshRate(88_787, 1),
@@ -130,6 +131,92 @@ public sealed class ProfileManagementServiceTests
                 0,
                 1),
         };
+    }
+
+    [Fact]
+    public async Task QueuedRenameMergesIntoLatestSettingsAndSameProfileChanges()
+    {
+        var profile = new DisplayProfile(Guid.NewGuid(), "Desktop", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            null, [Display("display-1")], "display-1", DisplayProfileCaptureSchema.Current, []);
+        var store = new BlockingStore();
+        using var session = new ConfigurationSession(store, ApplicationConfiguration.CreateDefault() with
+        { Profiles = [profile], ProfileOrder = [profile.Id] });
+        var service = new ProfileManagementService(session, new FakeCapture { Snapshot = Snapshot(Display("display-1")) },
+            new ActiveProfileMatcher(new MonitorIdentityResolver()));
+        var hotkey = new HotkeyBinding(HotkeyModifiers.Control, 0x31);
+        var settingsSave = session.UpdateAsync(current => current with
+        {
+            ApplicationSettings = current.ApplicationSettings with { UpdateChecksEnabled = false },
+            Profiles = [profile with { DirectHotkey = hotkey }],
+        });
+        await store.SaveStarted.Task;
+        var rename = service.RenameAsync(profile.Id, "Renamed");
+        Assert.False(rename.IsCompleted);
+        store.AllowSave.SetResult();
+        await Task.WhenAll(settingsSave, rename);
+        Assert.False(session.Current.ApplicationSettings.UpdateChecksEnabled);
+        Assert.Equal("Renamed", session.Current.Profiles[0].Name);
+        Assert.Equal(hotkey, session.Current.Profiles[0].DirectHotkey);
+    }
+
+    [Fact]
+    public async Task ConcurrentSameNameCreatesOnlyOneProfile()
+    {
+        var fixture = new Fixture();
+        await fixture.Service.SaveCurrentAsync("Desktop");
+        fixture.Capture.Snapshot = Snapshot(Display("display-2", "SERIAL-2"));
+        var captured = new TaskCompletionSource<CapturedDisplaySnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Capture.Handler = _ => captured.Task;
+        var first = fixture.Service.SaveCurrentAsync("Movie");
+        var second = fixture.Service.SaveCurrentAsync(" movie ");
+        Assert.False(first.IsCompleted);
+        Assert.False(second.IsCompleted);
+        captured.SetResult(fixture.Capture.Snapshot);
+        var outcomes = await Task.WhenAll(first.ContinueWith(task => task.Exception?.InnerException, TaskScheduler.Default),
+            second.ContinueWith(task => task.Exception?.InnerException, TaskScheduler.Default));
+        Assert.Single(outcomes, exception => exception is ConfigurationValidationException);
+        Assert.Equal(2, fixture.Session.Current.Profiles.Count);
+    }
+
+    [Fact]
+    public async Task CaptureUpdatePreservesConcurrentRenameAndHotkeyChange()
+    {
+        var fixture = new Fixture();
+        var saved = (await fixture.Service.SaveCurrentAsync("Desktop")).Profile;
+        var captured = new TaskCompletionSource<CapturedDisplaySnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Capture.Handler = _ => captured.Task;
+        var pending = fixture.Service.UpdateFromCurrentAsync(saved.Id);
+        await fixture.Service.RenameAsync(saved.Id, "Renamed");
+        var binding = new HotkeyBinding(HotkeyModifiers.Alt, 0x31);
+        await fixture.Service.SetHotkeyAsync(saved.Id, binding);
+        captured.SetResult(Snapshot(Display("display-1") with { WindowsUiScalePercent = 175 }));
+        var updated = await pending;
+        Assert.Equal("Renamed", updated.Name);
+        Assert.Equal(binding, updated.DirectHotkey);
+        Assert.Equal(175, updated.Displays[0].WindowsUiScalePercent);
+    }
+
+    [Fact]
+    public async Task ReusedRuntimeIdCannotChangeSelectedBindingIdentity()
+    {
+        var fixture = new Fixture();
+        var saved = (await fixture.Service.SaveCurrentAsync("Desktop")).Profile;
+        var selected = fixture.Capture.Snapshot.ConnectedDisplays[0];
+        fixture.Capture.Snapshot = Snapshot(Display("replacement", "OTHER-SERIAL"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.RememberBindingAsync(saved.Id, saved.Displays[0].DisplayId, selected));
+        Assert.Empty(fixture.Session.Current.Profiles[0].LastSuccessfulIdentityBindings);
+    }
+
+    private sealed class BlockingStore : IConfigurationStore
+    {
+        internal TaskCompletionSource SaveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource AllowSave { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<ApplicationConfiguration> LoadAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public async Task SaveAsync(ApplicationConfiguration configuration, CancellationToken cancellationToken = default)
+        {
+            SaveStarted.TrySetResult();
+            await AllowSave.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private static CapturedDisplaySnapshot Snapshot(DesiredDisplayPath display) => new(
@@ -180,8 +267,9 @@ public sealed class ProfileManagementServiceTests
     private sealed class FakeCapture : IDisplayCaptureService
     {
         internal required CapturedDisplaySnapshot Snapshot { get; set; }
+        internal Func<CancellationToken, Task<CapturedDisplaySnapshot>>? Handler { get; set; }
 
-        public Task<CapturedDisplaySnapshot> CaptureAsync(CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
+        public Task<CapturedDisplaySnapshot> CaptureAsync(CancellationToken cancellationToken = default) => Handler?.Invoke(cancellationToken) ?? Task.FromResult(Snapshot);
     }
 
     private sealed class FrozenTimeProvider : TimeProvider

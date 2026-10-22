@@ -15,6 +15,7 @@ using MoniTopo.Core.Configuration;
 using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Persistence;
+using MoniTopo.Core.Recovery;
 using MoniTopo.Core.Updates;
 using MoniTopo.Windows.Display;
 using MoniTopo.Windows.Input;
@@ -33,6 +34,7 @@ public partial class App : System.Windows.Application, IDisposable
     private PopupWindow? _popupWindow;
     private ConfigurationSession? _configuration;
     private StartupSettingsCoordinator? _startupSettings;
+    private PopupHotkeySettingsCoordinator? _popupHotkeySettings;
     private GuardedProfileActivator? _profileActivator;
     private DisplayStateRefreshService? _displayRefresh;
     private HotkeyCommandRouter? _hotkeyRouter;
@@ -43,6 +45,7 @@ public partial class App : System.Windows.Application, IDisposable
     private LocalDiagnosticLog? _diagnosticLog;
     private bool _exiting;
     private bool _disposed;
+    private bool _openRequestedDuringStartup;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -50,7 +53,16 @@ public partial class App : System.Windows.Application, IDisposable
         _singleInstance = SingleInstanceCoordinator.CreateForCurrentUser();
         if (!_singleInstance.IsPrimary)
         {
-            _ = await _singleInstance.SignalPrimaryAsync().ConfigureAwait(true);
+            if (!await _singleInstance.SignalPrimaryAsync().ConfigureAwait(true))
+            {
+                var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MoniTopo");
+                var build = ApplicationBuildInfo.Current(null, false);
+                new LocalDiagnosticLog(Path.Combine(data, "logs"), startupMessage: build.DiagnosticText)
+                    .Write("SingleInstance", "The running instance did not acknowledge the open-window request within the deadline.");
+                System.Windows.MessageBox.Show(
+                    "MoniTopo is already running, but did not respond to the request to open its window. Try its tray icon, or close the unresponsive instance in Task Manager and launch it again.",
+                    "MoniTopo", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
             Shutdown();
             return;
         }
@@ -78,17 +90,44 @@ public partial class App : System.Windows.Application, IDisposable
         catch (ConfigurationLoadException exception)
         {
             _diagnosticLog.Write("Configuration", exception);
-            _configuration = new ConfigurationSession(store, ApplicationConfiguration.CreateDefault());
-            System.Windows.MessageBox.Show(exception.Message, "MoniTopo", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (exception.ValidBackupPath is not null && System.Windows.MessageBox.Show(
+                $"{exception.Message}\n\nA valid backup is available. Restore it? Choosing No closes MoniTopo and leaves your files intact.",
+                "MoniTopo configuration", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            {
+                try
+                {
+                    await store.RestoreBackupAsync(_shutdown.Token).ConfigureAwait(true);
+                    _configuration = await ConfigurationSession.LoadAsync(store).ConfigureAwait(true);
+                }
+                catch (Exception recoveryException) when (recoveryException is ConfigurationLoadException or IOException or UnauthorizedAccessException)
+                {
+                    _diagnosticLog.Write("ConfigurationRecovery", recoveryException);
+                    System.Windows.MessageBox.Show(recoveryException.Message, "MoniTopo configuration", MessageBoxButton.OK, MessageBoxImage.Error);
+                    Shutdown();
+                    return;
+                }
+            }
+            else
+            {
+                if (exception.ValidBackupPath is null)
+                {
+                    System.Windows.MessageBox.Show($"{exception.Message}\n\nMoniTopo will close without changing your configuration. Restore or repair the configuration file before starting again.", "MoniTopo configuration", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+
+                Shutdown();
+                return;
+            }
         }
 
         var startupExecutable = StartupExecutable.Current();
+        _configuration.NotificationFailed += (_, exception) => _diagnosticLog.Write("ConfigurationNotification", exception);
         var runAtLogin = new RunAtLoginService(
             startupExecutable.Path,
             startupExecutable.IsPortable,
             new CurrentUserRunRegistry());
         _startupSettings = new StartupSettingsCoordinator(_configuration, runAtLogin);
         _updates = new UpdateCoordinator(updateClient, _configuration);
+        _updates.NotificationFailed += (_, exception) => _diagnosticLog.Write("UpdateNotification", exception);
         var isFirstRun = !_configuration.Current.ApplicationSettings.FirstRunCompleted;
         if (isFirstRun)
         {
@@ -130,8 +169,10 @@ public partial class App : System.Windows.Application, IDisposable
         _activationInteraction = new ActivationInteractionController(
             _profileActivator,
             _tray,
-            enabled => _ = _hotkeys.SetProfileHotkeysEnabled(enabled),
-            message => _diagnosticLog.Write("Activation", message));
+            SetProfileHotkeysEnabled,
+            message => _diagnosticLog.Write("Activation", message),
+            new WpfUiDispatcher(Dispatcher));
+        _activationInteraction.BusyChanged += (_, busy) => _popupWindow.ViewModel.SetActivationBusy(busy);
         _activationInteraction.PopupProgressChanged += (_, progress) => _popupWindow.ViewModel.ReportProgress(progress.Message);
         _hotkeyRouter = new HotkeyCommandRouter(
             () => _configuration.Current.Profiles,
@@ -143,15 +184,16 @@ public partial class App : System.Windows.Application, IDisposable
         var captureService = new CcdCaptureService();
         var matcher = new ActiveProfileMatcher(resolver);
         var profileManagement = new ProfileManagementService(_configuration, captureService, matcher);
-        var popupHotkeySettings = new PopupHotkeySettingsCoordinator(
+        _popupHotkeySettings = new PopupHotkeySettingsCoordinator(
             _configuration,
-            binding => _hotkeys.RegisterPopup(binding));
+            binding => _hotkeys.RegisterPopup(binding),
+            new WpfUiDispatcher(Dispatcher));
         _mainWindow.Initialize(
             _configuration,
             profileManagement,
             _activationInteraction,
             _startupSettings,
-            popupHotkeySettings,
+            _popupHotkeySettings,
             _updates,
             (area, exception) => _diagnosticLog.Write(area, exception),
             (profileId, hotkey) => _hotkeys.RegisterProfile(profileId, hotkey));
@@ -159,19 +201,39 @@ public partial class App : System.Windows.Application, IDisposable
             captureService,
             matcher,
             () => _configuration.Current);
-        _activeDisplayState.Changed += (_, state) => Dispatcher.BeginInvoke(() => _tray.SetCurrentState(state.ProfileId is null ? null : state.DisplayName));
+        _activeDisplayState.Changed += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            var state = _activeDisplayState.Current;
+            _tray.SetCurrentState(state.ProfileId is null ? null : state.DisplayName);
+            RefreshVisiblePopup();
+        });
+        _configuration.Changed += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            RefreshVisiblePopup();
+            if (_displayRefresh is not null)
+            {
+                _ = _displayRefresh.NotifyDisplayChangeAsync();
+            }
+        });
         _displayRefresh = new DisplayStateRefreshService(async cancellationToken =>
         {
             try
             {
                 await _activeDisplayState.RefreshAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (DisplayCaptureException)
+            catch (DisplayCaptureException exception) when (exception.IsTransient)
             {
                 // A transient read failure leaves the last derived state until the next event/poll.
             }
+            catch (DisplayCaptureException exception)
+            {
+                _diagnosticLog.Write("DisplayRefresh", exception);
+                _ = Dispatcher.BeginInvoke(() => _mainWindow?.ReportStatus(
+                    $"MoniTopo could not refresh the current display state. {exception.Message}"));
+            }
         });
         _messageWindow.DisplayStateChanged += (_, _) => _ = _displayRefresh.NotifyDisplayChangeAsync();
+        _activationInteraction.ActivationCompleted += (_, _) => _ = _displayRefresh.NotifyDisplayChangeAsync();
         SystemEvents.SessionSwitch += OnSessionSwitch;
         await _displayRefresh.RunConsistencyCheckAsync().ConfigureAwait(true);
 
@@ -179,7 +241,8 @@ public partial class App : System.Windows.Application, IDisposable
         _updates.Changed += OnUpdateStateChanged;
         _updateCheckTask = CheckForUpdatesAfterStartupAsync();
 
-        if (isFirstRun || _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch)
+        await ReportPendingRecoveryAsync(Path.Combine(applicationDataPath, "recovery")).ConfigureAwait(true);
+        if (LaunchBehavior.ShouldShowMainWindow(e.Args, isFirstRun, _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch) || _openRequestedDuringStartup)
         {
             OpenMainWindow();
         }
@@ -208,8 +271,11 @@ public partial class App : System.Windows.Application, IDisposable
         _hotkeys?.Dispose();
         _messageWindow?.Dispose();
         _popupWindow?.Close();
+        _mainWindow?.Dispose();
         _tray?.Dispose();
         _profileActivator?.Dispose();
+        _startupSettings?.Dispose();
+        _popupHotkeySettings?.Dispose();
         _updates?.Dispose();
         _configuration?.Dispose();
         _shutdown.Dispose();
@@ -245,15 +311,30 @@ public partial class App : System.Windows.Application, IDisposable
         }
     }
 
+    private void SetProfileHotkeysEnabled(bool enabled)
+    {
+        foreach (var failure in _hotkeys!.SetProfileHotkeysEnabled(enabled).Where(result => !result.Succeeded))
+        {
+            var message = failure.Message ?? "A profile hotkey could not be registered. Reassign it in MoniTopo.";
+            _diagnosticLog?.Write("Hotkeys", message);
+            _tray?.ShowError(message);
+            _mainWindow?.ReportStatus(message);
+        }
+    }
+
     private async void OnHotkeyPressed(object? sender, HotkeyCommand command)
     {
-        if (_hotkeyRouter is not null)
+        if (_hotkeyRouter is not null && !_exiting)
         {
             await _hotkeyRouter.HandleAsync(command).ConfigureAwait(true);
         }
     }
 
-    private void OnOpenRequested(object? sender, EventArgs eventArgs) => Dispatcher.BeginInvoke(OpenMainWindow);
+    private void OnOpenRequested(object? sender, EventArgs eventArgs) => Dispatcher.BeginInvoke(() =>
+    {
+        _openRequestedDuringStartup = true;
+        OpenMainWindow();
+    });
 
     private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs eventArgs) =>
         _diagnosticLog?.Write("Dispatcher", eventArgs.Exception);
@@ -291,9 +372,9 @@ public partial class App : System.Windows.Application, IDisposable
     private void OnUpdateStateChanged(object? sender, UpdateState state) =>
         Dispatcher.BeginInvoke(() =>
         {
-            if (_popupWindow is not null)
+            if (_popupWindow is not null && _updates is not null && !_disposed)
             {
-                _popupWindow.ViewModel.ApplyUpdateState(state);
+                _popupWindow.ViewModel.ApplyUpdateState(_updates.Current);
             }
         });
 
@@ -301,15 +382,23 @@ public partial class App : System.Windows.Application, IDisposable
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), _shutdown.Token).ConfigureAwait(false);
             if (_updates is not null && !_exiting)
             {
-                await _updates.CheckAutomaticallyAsync(_shutdown.Token).ConfigureAwait(false);
+                await _updates.RunAutomaticChecksAsync(_shutdown.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
             // Normal application shutdown cancels the delayed/background check.
+        }
+        catch (Exception exception)
+        {
+            _diagnosticLog?.Write("AutomaticUpdates", exception);
+            if (!_exiting)
+            {
+                _ = Dispatcher.BeginInvoke(() => _mainWindow?.ReportStatus(
+                    "Automatic update checks stopped after an error. See the local diagnostic log or check manually in Settings."));
+            }
         }
     }
 
@@ -320,24 +409,45 @@ public partial class App : System.Windows.Application, IDisposable
             return;
         }
 
-        _popupWindow.Toggle(_configuration.Current.Profiles, _activeDisplayState?.Current.ProfileId);
+        _popupWindow.Toggle(OrderedProfiles(), _activeDisplayState?.Current.ProfileId);
+    }
+
+    private MoniTopo.Core.Models.DisplayProfile[] OrderedProfiles()
+    {
+        var configuration = _configuration!.Current;
+        var byId = configuration.Profiles.ToDictionary(profile => profile.Id);
+        return configuration.ProfileOrder.Where(byId.ContainsKey).Select(id => byId[id]).ToArray();
+    }
+
+    private void RefreshVisiblePopup()
+    {
+        if (_popupWindow?.IsVisible == true && _configuration is not null)
+        {
+            _popupWindow.ViewModel.RefreshProfiles(OrderedProfiles(), _activeDisplayState?.Current.ProfileId);
+        }
     }
 
     private async void OnPopupActivateRequested(object? sender, Guid profileId)
     {
         if (_configuration?.Current.Profiles.FirstOrDefault(profile => profile.Id == profileId) is not { } profile ||
             _activationInteraction is null ||
-            _popupWindow is null)
+            _popupWindow is null || _activationInteraction.IsBusy || _exiting)
         {
             return;
         }
 
-        _popupWindow.ViewModel.BeginActivation(profile.Name);
+        _popupWindow.ViewModel.ReportProgress($"Activating {profile.Name}…");
         var result = await _activationInteraction.ActivateAsync(profile, ActivationOrigin.Popup).ConfigureAwait(true);
+        if (result.Outcome == ActivationOutcome.Busy)
+        {
+            _popupWindow.ViewModel.ReportProgress(result.Message);
+            return;
+        }
         _popupWindow.ViewModel.CompleteActivation(
             result.Outcome == ActivationOutcome.Success,
             result.Message,
             result.Outcome == ActivationOutcome.Success ? profile.Id : _activeDisplayState?.Current.ProfileId);
+        _popupWindow.ViewModel.SetActivationBusy(_activationInteraction.IsBusy);
         if (_displayRefresh is not null)
         {
             await _displayRefresh.RunConsistencyCheckAsync().ConfigureAwait(true);
@@ -346,7 +456,13 @@ public partial class App : System.Windows.Application, IDisposable
 
     private async void OnPopupUpdateActionRequested(object? sender, EventArgs eventArgs)
     {
-        if (_updates is null)
+        if (_updates is null || _activationInteraction is null || _exiting)
+        {
+            return;
+        }
+
+        await using var interaction = await _activationInteraction.TryBeginInteractionAsync().ConfigureAwait(true);
+        if (interaction is null)
         {
             return;
         }
@@ -366,6 +482,9 @@ public partial class App : System.Windows.Application, IDisposable
         {
             _diagnosticLog?.Write("PopupUpdate", exception);
             _popupWindow?.ViewModel.ReportProgress(exception.Message);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
         }
     }
 
@@ -402,7 +521,7 @@ public partial class App : System.Windows.Application, IDisposable
         _mainWindow.Activate();
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (_exiting)
         {
@@ -410,9 +529,47 @@ public partial class App : System.Windows.Application, IDisposable
         }
 
         _exiting = true;
+        _shutdown.Cancel();
+        _mainWindow?.ReportStatus("Waiting for the current operation before exiting…");
+        if (_activationInteraction is not null)
+        {
+            await _activationInteraction.BeginShutdownAsync().ConfigureAwait(true);
+        }
+
+        if (_updateCheckTask is not null)
+        {
+            await _updateCheckTask.ConfigureAwait(true);
+        }
+
+        if (_displayRefresh is not null)
+        {
+            await _displayRefresh.DisposeAsync().ConfigureAwait(true);
+            _displayRefresh = null;
+        }
+
         _mainWindow?.AllowClose();
         _mainWindow?.Close();
         Shutdown();
+    }
+
+    private async Task ReportPendingRecoveryAsync(string directory)
+    {
+        try
+        {
+            var store = new RecoveryResultStore(directory);
+            foreach (var pending in await store.ReadPendingAsync(_shutdown.Token).ConfigureAwait(true))
+            {
+                _diagnosticLog?.Write("Recovery", $"{pending.Result.Outcome}: {pending.Result.Message}");
+                System.Windows.MessageBox.Show(pending.Result.Message, "MoniTopo display recovery", MessageBoxButton.OK,
+                    pending.Result.RollbackSucceeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                await store.AcknowledgeAsync(pending, _shutdown.Token).ConfigureAwait(true);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _diagnosticLog?.Write("RecoveryResults", exception);
+            _mainWindow?.ReportStatus("MoniTopo could not read or acknowledge a previous recovery report. See the local diagnostic log.");
+        }
     }
 
     private sealed class ApplicationSurfaces(App owner) : IApplicationSurfaces
