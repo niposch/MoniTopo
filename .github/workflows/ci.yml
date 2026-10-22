@@ -30,6 +30,9 @@ jobs:
         run: dotnet tool restore
       - name: Verify formatting
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
+      - name: Verify release-version conversion
+        shell: pwsh
+        run: ./eng/Test-ReleaseVersion.ps1
       - name: Build
         run: dotnet build MoniTopo.slnx --configuration Release --no-restore -p:Version=${{ env.SMOKE_PACKAGE_VERSION }}
       - name: Test Core with coverage

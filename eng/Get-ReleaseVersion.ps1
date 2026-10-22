@@ -34,7 +34,7 @@ if ($canonical -cne $PackageVersion) {
     throw "Package version '$PackageVersion' is not canonical; expected '$canonical'."
 }
 
-$display = $date.ToString('dd.MM.yy', [System.Globalization.CultureInfo]::InvariantCulture)
+$display = $date.ToString('yyyy.MM.dd', [System.Globalization.CultureInfo]::InvariantCulture)
 if ($revision -gt 0) {
     $display = "$display.$revision"
 }

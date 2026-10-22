@@ -13,6 +13,10 @@ on:
         description: Mark the draft as a prerelease
         type: boolean
         default: false
+      package_only:
+        description: Build and retain artifacts without uploading a GitHub release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,6 +56,9 @@ jobs:
         run: dotnet tool restore
       - name: Verify formatting
         run: dotnet format MoniTopo.slnx --verify-no-changes --no-restore
+      - name: Verify release-version conversion
+        shell: pwsh
+        run: ./eng/Test-ReleaseVersion.ps1
       - name: Build
         run: dotnet build MoniTopo.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.package }}
       - name: Test Core with coverage
@@ -66,6 +73,7 @@ jobs:
       - name: Publish win-x64
         run: dotnet publish src/MoniTopo.App/MoniTopo.App.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/publish -p:Version=${{ steps.version.outputs.package }}
       - name: Download previous channel assets for deltas
+        if: ${{ !inputs.package_only }}
         continue-on-error: true
         run: dotnet tool run vpk -- download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre ${{ steps.version.outputs.prerelease }} --outputDir artifacts/releases
       - name: Build installer and portable package
@@ -76,4 +84,5 @@ jobs:
           name: MoniTopo-${{ steps.version.outputs.package }}-release
           path: artifacts/releases
       - name: Create draft release
+        if: ${{ !inputs.package_only }}
         run: dotnet tool run vpk -- upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --pre ${{ steps.version.outputs.prerelease }} --releaseName "${{ steps.version.outputs.title }}" --tag ${{ steps.version.outputs.tag }} --targetCommitish ${{ github.sha }} --outputDir artifacts/releases

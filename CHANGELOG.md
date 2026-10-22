@@ -7,11 +7,12 @@
 - Preserve connected monitor edges after resolution edits, reject conflicting arrangements, and use Windows timing selection without relaxing exact requested settings or recovery.
 - Keep cloned source mode/scale changes capture-based; supported per-target HDR remains editable.
 
-## 22.10.26 — first release
+## 2026.10.22 — first release
 
 - Save and restore Windows display profiles from the tray or global hotkeys, including topology, primary display, modes, Windows scale, and HDR.
 - Use the Settings page for sign-in startup, popup shortcuts, theme choice, and manual staged updates.
 - Read update release notes before choosing to download; stable builds only check stable releases.
+- Display date versions as year.month.day. The first-release label was corrected before distribution; its ordered update-package version remains 2026.1022.0.
 
 ### Reliability and interface changes since the release candidate
 
@@ -34,7 +35,7 @@
 - The installer is unsigned. Windows SmartScreen may warn about the publisher.
 - Per-monitor Windows scaling uses an isolated runtime-probed contract. Docks, clones, mixed-DPI placement, and different GPU/driver combinations require validation on the intended hardware; no vendor-specific controls or brightness changes are included.
 
-## 22.07.26 release candidate
+## 2026.07.22 release candidate
 
 - Initial project foundation for the Windows tray application.
 - Capture, identity matching, profile management, tray switching, global hotkeys, exact activation orchestration, and out-of-process recovery.

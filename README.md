@@ -24,7 +24,7 @@ On first run, choose whether MoniTopo should start when you sign in, then captur
 
 The tray popup shows each saved layout, name, and hotkey. It opens beside the primary monitor's notification area, independent of the pointer position. **Settings → Open tray popup** changes its global shortcut (default **Ctrl+Alt+M**). Single-key shortcuts are allowed after confirmation because they intercept that key in other applications. Profile hotkeys also appear in the main profile list.
 
-In the main window, select a profile and choose **Edit display settings** to change resolution, refresh rate, HDR, and Windows scale using available-option dropdowns. Refresh choices follow the selected resolution. **Save profile** only saves; choose **Activate** separately to apply it. Resolution changes keep connected monitor edges together without a layout editor. Disconnected or inactive displays keep their saved values until Windows can report their options. For cloned displays, change the shared mode and scale in Windows and use **Update from current setup**; HDR remains editable per display. This editor is in development and is not included in release 22.10.26.
+In the main window, select a profile and choose **Edit display settings** to change resolution, refresh rate, HDR, and Windows scale using available-option dropdowns. Refresh choices follow the selected resolution. **Save profile** only saves; choose **Activate** separately to apply it. Resolution changes keep connected monitor edges together without a layout editor. Disconnected or inactive displays keep their saved values until Windows can report their options. For cloned displays, change the shared mode and scale in Windows and use **Update from current setup**; HDR remains editable per display. This editor is in development and is not included in release 2026.10.22.
 
 Choose **System**, **Light**, or **Dark** under **Settings → General → Theme**. The choice applies immediately to MoniTopo and is remembered; it does not change the Windows theme.
 
@@ -33,6 +33,8 @@ Display activation requires an explicit click/hotkey and `MONITOPO_ALLOW_REAL_DI
 Installed builds check stable releases at most once per day when enabled. Choose **Release notes** in the tray update row or **Settings → Updates** to read the available version's notes before deciding. Reading notes does not download anything. MoniTopo does not download an update until **Download update** is selected. A staged update can be applied immediately with **Restart now**, or automatically the next time MoniTopo starts.
 
 Current limitations include the runtime-probed Windows scale contract, ambiguous identical monitors requiring manual binding, unsigned packages, and differences between GPU drivers, docks, and mixed-DPI setups. Follow the [manual display checklist](docs/manual-display-test.md) on the intended hardware. Profiles captured before capture schema 3 must be recaptured because older builds saved incorrect HDR-toggle state.
+
+Version labels use `YYYY.MM.DD` (first release: `2026.10.22`). Windows Installed Apps and update packages retain the ordered package version `2026.1022.0`; this is the same release, not a separate update channel.
 
 ## Development
 

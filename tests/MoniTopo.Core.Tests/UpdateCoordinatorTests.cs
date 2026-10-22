@@ -37,7 +37,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task AvailableUpdateDownloadsOnlyAfterExplicitAction()
     {
-        var update = new AvailableUpdate("2026.720.1", "20.07.26.1", "Notes");
+        var update = new AvailableUpdate("2026.720.1", "2026.07.20.1", "Notes");
         var client = new FakeClient { Update = update };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings(), new FrozenTimeProvider(Now));
 
@@ -88,7 +88,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task StagedUpdateSurvivesChecksAndRemainsInstallable()
     {
-        var staged = new AvailableUpdate("2026.720.1", "20.07.26.1", null);
+        var staged = new AvailableUpdate("2026.720.1", "2026.07.20.1", null);
         var client = new FakeClient { PendingRestart = staged, Failure = new(UpdateClientError.Network, "offline") };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings(), new FrozenTimeProvider(Now));
         Assert.Equal(UpdateStatus.ReadyToInstall, (await coordinator.CheckNowAsync()).Status);
@@ -101,7 +101,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task SuccessfulDownloadRemainsStagedEvenIfClientTemporarilyOmitsPendingAsset()
     {
-        var client = new FakeClient { Update = new("2026.720.1", "20.07.26.1", null) };
+        var client = new FakeClient { Update = new("2026.720.1", "2026.07.20.1", null) };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings());
         await coordinator.CheckNowAsync();
         await coordinator.DownloadAsync();
@@ -114,7 +114,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task FailedDownloadKeepsAvailableUpdateForExplicitRetry()
     {
-        var client = new FakeClient { Update = new("2026.720.1", "20.07.26.1", null) };
+        var client = new FakeClient { Update = new("2026.720.1", "2026.07.20.1", null) };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings());
         await coordinator.CheckNowAsync();
         client.DownloadFailure = new UpdateClientException(UpdateClientError.Checksum, "mismatch");
@@ -128,7 +128,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task CheckCancellationRetainsPreviouslyAvailableUpdate()
     {
-        var client = new FakeClient { Update = new("2026.720.1", "20.07.26.1", null) };
+        var client = new FakeClient { Update = new("2026.720.1", "2026.07.20.1", null) };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings());
         await coordinator.CheckNowAsync();
         client.BlockCheck = true;
@@ -146,7 +146,7 @@ public sealed class UpdateCoordinatorTests
     {
         var client = new FakeClient
         {
-            PendingRestart = new("2026.720.1", "20.07.26.1", null),
+            PendingRestart = new("2026.720.1", "2026.07.20.1", null),
             ApplyFailure = new UpdateClientException(UpdateClientError.Busy, "locked")
         };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings());
@@ -162,7 +162,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task NotificationFailureCannotUndoSuccessfulUpdateDownload()
     {
-        var client = new FakeClient { Update = new("2026.720.1", "20.07.26.1", null) };
+        var client = new FakeClient { Update = new("2026.720.1", "2026.07.20.1", null) };
         using var coordinator = new UpdateCoordinator(client, new FakeSettings());
         var failures = 0;
         coordinator.Changed += (_, _) => throw new InvalidOperationException("observer failed");
@@ -176,7 +176,7 @@ public sealed class UpdateCoordinatorTests
     [Fact]
     public async Task CancellationRestoresAvailableUpdateAndDisposalDoesNotBreakGateRelease()
     {
-        var client = new FakeClient { Update = new("2026.720.1", "20.07.26.1", null), BlockDownload = true };
+        var client = new FakeClient { Update = new("2026.720.1", "2026.07.20.1", null), BlockDownload = true };
         var coordinator = new UpdateCoordinator(client, new FakeSettings());
         await coordinator.CheckNowAsync();
         var operation = coordinator.DownloadAsync();

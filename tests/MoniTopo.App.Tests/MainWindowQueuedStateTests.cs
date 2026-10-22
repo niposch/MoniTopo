@@ -103,7 +103,7 @@ public sealed class MainWindowQueuedStateTests
         public string? CurrentPackageVersion => "2026.808.0";
         public AvailableUpdate? PendingRestart { get; private set; }
         public Task<AvailableUpdate?> CheckAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<AvailableUpdate?>(new AvailableUpdate("2026.1022.0", "22.10.26", "# Fixes\n- Synthetic notes"));
+            Task.FromResult<AvailableUpdate?>(new AvailableUpdate("2026.1022.0", "2026.10.22", "# Fixes\n- Synthetic notes"));
         public Task DownloadAsync(AvailableUpdate update, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
         {
             PendingRestart = update;
