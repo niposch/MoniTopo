@@ -131,10 +131,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureInteractiveSession();
+        DisplayConfigurationPlanBuilder.ValidateProfileCapture(profile);
         var available = QueryAll();
         _pendingPlan = null;
         _candidatePlans.Clear();
-        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
             ValidateScaleForPreflight(display, bindings, available);
@@ -145,7 +145,17 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             }
         }
 
-        _pendingPlan = plan;
+        return Task.CompletedTask;
+    }
+
+    private void BuildCorePlans(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings)
+    {
+        // Property-only activation must not build/validate/reapply a CCD mode plan.
+        // When needed, build from fresh routing immediately before validation.
+        var available = QueryAll();
+        _pendingPlan = null;
+        _candidatePlans.Clear();
+        var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         for (var routingIndex = 0; routingIndex < 32; routingIndex++)
         {
             try
@@ -164,8 +174,6 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                 break;
             }
         }
-
-        return Task.CompletedTask;
     }
 
     public Task ValidateCoreConfigurationAsync(
@@ -174,7 +182,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _ = GetPendingPlan();
+        BuildCorePlans(profile, bindings);
         var failures = new List<DisplayActivationException>();
         foreach (var candidate in _candidatePlans)
         {
@@ -248,14 +256,22 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        foreach (var display in profile.Displays)
+        foreach (var group in profile.Displays.GroupBy(display => display.SourceGroupId, StringComparer.Ordinal))
         {
+            var display = group.First();
+            if (group.Any(path => path.WindowsUiScalePercent != display.WindowsUiScalePercent))
+            {
+                throw new ActivationFailureException("activation.scaling.clone-conflict", "Cloned displays must use the same Windows display scale.");
+            }
             var setting = await ReadWithRetryAsync(async () =>
             {
                 var path = await ResolveCurrentPropertyPathAsync(profile, display.DisplayId, cancellationToken).ConfigureAwait(false);
-                return (Path: path, Relative: ResolveRelativeScale(path.SourceInfo, display.WindowsUiScalePercent));
+                return (Path: path, Scale: ReadScaleSetting(_query, path.SourceInfo.AdapterId, path.SourceInfo.Id, display.WindowsUiScalePercent));
             }, _timeProvider, cancellationToken).ConfigureAwait(false);
-            _mutation.SetDpiScale(setting.Path.SourceInfo.AdapterId, setting.Path.SourceInfo.Id, setting.Relative);
+            if (setting.Scale.Desired != setting.Scale.Current)
+            {
+                _mutation.SetDpiScale(setting.Path.SourceInfo.AdapterId, setting.Path.SourceInfo.Id, setting.Scale.Desired);
+            }
         }
     }
 
@@ -359,38 +375,63 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             cancellationToken.ThrowIfCancellationRequested();
             var rollback = DisplayRollbackSnapshotSerializer.Read(dataPath);
             mutation.ApplyTemporary(rollback.CoreConfiguration);
-            _ = await WaitForStableCoreAsync(query, clock, cancellationToken).ConfigureAwait(false);
-            foreach (var property in rollback.Properties)
+            var needsPersistence = true;
+            for (var pass = 0; pass < 3; pass++)
             {
-                var scaling = await ReadWithRetryAsync(() =>
+                var current = await WaitForStableCoreAsync(query, clock, cancellationToken).ConfigureAwait(false);
+                if (pass > 0 && !ReadRollbackMatch(rollback, current, query).CoreMatches)
                 {
-                    var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
-                    var path = ResolveRollbackPath(property, current, query);
-                    return Task.FromResult((Path: path, Relative: ResolveRelativeScale(query, path.SourceInfo.AdapterId, path.SourceInfo.Id, property.WindowsScalePercent)));
-                }, clock, cancellationToken).ConfigureAwait(false);
-                mutation.SetDpiScale(scaling.Path.SourceInfo.AdapterId, scaling.Path.SourceInfo.Id, scaling.Relative);
-                // HDR can itself trigger source reassignment. Never carry a saved source address
-                // from before the topology change into a device-info mutation.
-                var color = await ReadWithRetryAsync(() =>
-                {
-                    var active = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
-                    var path = ResolveRollbackPath(property, active, query);
-                    return Task.FromResult((Path: path, Hdr: query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id)));
-                }, clock, cancellationToken).ConfigureAwait(false);
-                var path = color.Path;
-                var hdr = color.Hdr;
-                if (hdr.IsSupported && !hdr.IsLimitedByPolicy && hdr.IsEnabled != property.HdrEnabled)
-                {
-                    mutation.SetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id, property.HdrEnabled);
+                    mutation.ApplyTemporary(rollback.CoreConfiguration);
+                    needsPersistence = true;
+                    _ = await WaitForStableCoreAsync(query, clock, cancellationToken).ConfigureAwait(false);
                 }
+
+                foreach (var property in rollback.Properties)
+                {
+                    // Restore HDR first: its mode transition can reset both core and DPI.
+                    // Rebind each property write to the freshly observed physical panel.
+                    var color = await ReadWithRetryAsync(() =>
+                    {
+                        var active = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                        var path = ResolveRollbackPath(property, active, query);
+                        return Task.FromResult((Path: path, Hdr: query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id)));
+                    }, clock, cancellationToken).ConfigureAwait(false);
+                    if (color.Hdr.IsSupported && !color.Hdr.IsLimitedByPolicy && color.Hdr.IsEnabled != property.HdrEnabled)
+                    {
+                        mutation.SetHdrState(color.Path.TargetInfo.AdapterId, color.Path.TargetInfo.Id, property.HdrEnabled);
+                        await WaitForRollbackPropertyAsync(property, hdr: true, query, clock, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    var scaling = await ReadWithRetryAsync(() =>
+                    {
+                        var active = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                        var path = ResolveRollbackPath(property, active, query);
+                        return Task.FromResult((Path: path, Scale: ReadScaleSetting(query, path.SourceInfo.AdapterId, path.SourceInfo.Id, property.WindowsScalePercent)));
+                    }, clock, cancellationToken).ConfigureAwait(false);
+                    if (scaling.Scale.Desired != scaling.Scale.Current)
+                    {
+                        mutation.SetDpiScale(scaling.Path.SourceInfo.AdapterId, scaling.Path.SourceInfo.Id, scaling.Scale.Desired);
+                        await WaitForRollbackPropertyAsync(property, hdr: false, query, clock, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                var match = ReadRollbackMatch(rollback, current, query);
+                if (!match.CoreMatches || !match.PropertiesMatch) continue;
+                var verified = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
+                if (!needsPersistence) return true;
+                // Persistence may itself reset properties. Repair before declaring success.
+                mutation.Validate(verified);
+                mutation.Persist(verified);
+                needsPersistence = false;
             }
 
-            var verified = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
-            // Persist the observed, verified routing, not the pre-change source addresses.
-            mutation.Validate(verified);
-            mutation.Persist(verified);
-            _ = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
-            return true;
+            if (!needsPersistence)
+            {
+                _ = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            return false;
         }
         catch (RecoveryOwnershipLostException)
         {
@@ -469,7 +510,10 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         IDisplayConfigNativeFacade query,
         NativeAdapterId adapterId,
         uint sourceId,
-        int desiredPercent)
+        int desiredPercent) => ReadScaleSetting(query, adapterId, sourceId, desiredPercent).Desired;
+
+    private static (int Desired, int Current) ReadScaleSetting(
+        IDisplayConfigNativeFacade query, NativeAdapterId adapterId, uint sourceId, int desiredPercent)
     {
         var (errorCode, packet) = query.TryGetDpiScale(adapterId, sourceId);
         if (errorCode != DisplayConfigNativeFacade.ErrorSuccess)
@@ -488,7 +532,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
                 $"Windows cannot apply the saved {desiredPercent}% display scale on this display.");
         }
 
-        return relativeScale;
+        return (relativeScale, packet.CurrentRelativeScale);
     }
 
     private static NativePathInfo? FindAvailableActivePath(
@@ -595,21 +639,8 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             try
             {
                 var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
-                var canonicalTargets = new Dictionary<string, string>(StringComparer.Ordinal);
-                var propertiesMatch = true;
-                foreach (var property in rollback.Properties)
-                {
-                    var path = ResolveRollbackPath(property, current, query);
-                    canonicalTargets[TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)] = TargetKey(property.TargetAdapterId, property.TargetId);
-                    var scale = new DisplayScaleService(query).Query(new DisplaySourceAddress(
-                        path.SourceInfo.AdapterId.LowPart, path.SourceInfo.AdapterId.HighPart, path.SourceInfo.Id));
-                    var hdr = query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
-                    propertiesMatch &= scale.IsSupported && scale.CurrentPercent == property.WindowsScalePercent &&
-                        (hdr.IsSupported && hdr.IsEnabled) == property.HdrEnabled;
-                }
-
-                var equal = propertiesMatch && string.Equals(CreateCoreSignature(rollback.CoreConfiguration),
-                    CreateCoreSignature(current, canonicalTargets), StringComparison.Ordinal);
+                var match = ReadRollbackMatch(rollback, current, query);
+                var equal = match.CoreMatches && match.PropertiesMatch;
                 if (equal && matched)
                 {
                     return current;
@@ -625,6 +656,54 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             await Task.Delay(StableObservationInterval, clock, cancellationToken).ConfigureAwait(false);
         }
 
+        throw new ActivationFailureException("activation.rollback.verification", "Windows did not restore every previous display setting.");
+    }
+
+    private static (bool CoreMatches, bool PropertiesMatch) ReadRollbackMatch(RollbackDisplayState rollback,
+        NativeDisplaySnapshot current, IDisplayConfigNativeFacade query)
+    {
+        var canonicalTargets = new Dictionary<string, string>(StringComparer.Ordinal);
+        var propertiesMatch = true;
+        foreach (var property in rollback.Properties)
+        {
+            var path = ResolveRollbackPath(property, current, query);
+            canonicalTargets[TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)] = TargetKey(property.TargetAdapterId, property.TargetId);
+            var scale = new DisplayScaleService(query).Query(new DisplaySourceAddress(
+                path.SourceInfo.AdapterId.LowPart, path.SourceInfo.AdapterId.HighPart, path.SourceInfo.Id));
+            var hdr = query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            propertiesMatch &= scale.IsSupported && scale.CurrentPercent == property.WindowsScalePercent &&
+                (hdr.IsSupported && hdr.IsEnabled) == property.HdrEnabled;
+        }
+        var coreMatches = string.Equals(CreateCoreSignature(rollback.CoreConfiguration),
+            CreateCoreSignature(current, canonicalTargets), StringComparison.Ordinal);
+        return (coreMatches, propertiesMatch);
+    }
+
+    private static async Task WaitForRollbackPropertyAsync(RollbackDisplayProperty property, bool hdr,
+        IDisplayConfigNativeFacade query, TimeProvider clock, CancellationToken cancellationToken)
+    {
+        var started = clock.GetTimestamp();
+        while (clock.GetElapsedTime(started) < StableTimeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                var path = ResolveRollbackPath(property, current, query);
+                if (hdr)
+                {
+                    var color = query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+                    if ((color.IsSupported && color.IsEnabled) == property.HdrEnabled) return;
+                }
+                else
+                {
+                    var scale = ReadScaleSetting(query, path.SourceInfo.AdapterId, path.SourceInfo.Id, property.WindowsScalePercent);
+                    if (scale.Desired == scale.Current) return;
+                }
+            }
+            catch (Exception exception) when (IsTransientTopologyRead(exception)) { }
+            await Task.Delay(StableObservationInterval, clock, cancellationToken).ConfigureAwait(false);
+        }
         throw new ActivationFailureException("activation.rollback.verification", "Windows did not restore every previous display setting.");
     }
 

@@ -84,8 +84,12 @@ public static class ProfileValidator
 
             if (!Enum.IsDefined(display.Orientation) || !Enum.IsDefined(display.PathScaling))
                 errors.Add(new("profile.display.mode", "A display has an invalid orientation or path scaling value."));
-            if (display.TargetSignal is { IsValid: false } || profile.CaptureSchemaVersion >= 4 && display.TargetSignal is null)
+            if (display.TargetSignal is { IsValid: false } || profile.CaptureSchemaVersion >= 4 && display.TargetSignal is null && display.ModeRequest is null)
                 errors.Add(new("profile.display.signal", "A display has missing or invalid target signal data."));
+            if (display.ModeRequest is { } request && (profile.CaptureSchemaVersion < 5 ||
+                request.ScanLineOrdering is < 1 or > 3 || display.TargetSignal is not null ||
+                display.DesktopImage is not null || display.BoostRefreshRate != false))
+                errors.Add(new("profile.display.request", "An edited display mode has invalid or stale captured timing data."));
             if (display.DesktopImage is { IsValid: false })
                 errors.Add(new("profile.display.desktopImage", "A display has invalid desktop image data."));
             if (profile.CaptureSchemaVersion >= 4 && display.BoostRefreshRate is null)

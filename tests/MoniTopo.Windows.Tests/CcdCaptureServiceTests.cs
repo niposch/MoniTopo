@@ -269,6 +269,7 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
     internal int DpiErrorCode { get; init; }
 
     internal NativeDpiScaleGet DpiPacket { get; init; }
+    internal Func<uint, (int ErrorCode, NativeDpiScaleGet Packet)>? DpiHandler { get; init; }
 
     internal int DpiQueryCount { get; private set; }
 
@@ -325,7 +326,7 @@ internal sealed class FakeDisplayNative : IDisplayConfigNativeFacade
     public (int ErrorCode, NativeDpiScaleGet Packet) TryGetDpiScale(NativeAdapterId adapterId, uint sourceId)
     {
         DpiQueryCount++;
-        return (DpiErrorCode, DpiPacket);
+        return DpiHandler?.Invoke(sourceId) ?? (DpiErrorCode, DpiPacket);
     }
 
     public bool IsPrimaryGdiDevice(string gdiDeviceName) => gdiDeviceName == "SYNTHETIC0";

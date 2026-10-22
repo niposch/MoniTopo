@@ -4,6 +4,8 @@ Run this checklist manually on the build being evaluated, with a keyboard path a
 
 Local validation on 22 October 2026 completed two round trips between the existing one- and two-display profiles and one deliberate pre-HDR failure with exact rollback. The original captured setup was verified after each run. This does not certify other monitors, docks, clones, DRR, mixed-DPI placement, or the installed update flow; the remaining checklist still applies.
 
+Additional explicit manual qualification on the same date exercised persisted editor settings: no-op, HDR on/off, refresh reduction, resolution reduction with edge preservation, scale on each of two monitors, fractional refresh selection, and combined mode/scale/HDR changes. It reproduced HDR restoring the earlier mode and Windows core persistence resetting DPI; bounded reconciliation fixes were then retested successfully, including an injected post-persistence failure with exact rollback. The fresh original setup was restored and verified after each scenario, with strict fractional-rate restoration. Automated tests remain fake-only. These checks used the production editor model and activation/recovery services through a separate manual executable, not UI click automation or an installed-update test.
+
 ## Preparation
 
 - Record the current Windows display arrangement in screenshots or notes.
@@ -23,6 +25,25 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - Repeat switching in both directions several times, including a profile that enables a currently inactive monitor. Confirm the active indicator agrees with Windows after each switch.
 - After a switch, use another profile hotkey without restarting MoniTopo; it must still work.
 - If existing profiles predate complete virtual-mode capture, update each from its intended Windows setup before evaluating virtual desktop-image or dynamic-refresh restoration.
+
+## Profile setting edits
+
+- Open **Edit display settings** for a connected active display. Compare available resolution/rate pairs, Windows scale steps, and HDR choices against Windows Settings. Verify fractional rates remain distinct where reported.
+- Change a resolution and confirm its refresh-rate list updates. Save and confirm the desktop has not changed; then explicitly activate and verify the requested source resolution, refresh, scale, HDR, and primary display.
+- Resize the primary display in a side-by-side profile and confirm its neighbor remains attached on the same edge; repeat with a display left/above the primary. Complex conflicting attachments must give an error without saving or applying.
+- Cancel a changed draft and confirm the profile is unchanged. Disconnect/disable a saved display and confirm missing options are explained rather than replaced with guessed values.
+- Change HDR only and scale only and confirm captured mode data remains intact. For clones, source mode and scale controls should be read-only while supported per-target HDR remains available.
+- Change the connected setup while an editor is open. A stale capability or changed profile must be rejected on Save; no display changes may happen during this check.
+- Activation failure must use the existing validated rollback/recovery path. Do not deliberately choose a destructive configuration or automate real writes to test the editor.
+
+## Change-aware activation
+
+- Activate an already-matching profile from the tray and a hotkey. Confirm it reports already active without a display reset or flicker.
+- Use two otherwise identical profiles differing only in HDR. Leave the pointer on the other monitor and switch both ways; record whether it stays in place. HDR may still cause a driver/display transition, so this requires hardware validation.
+- Repeat with scale-only profiles, and with resolution/refresh-only profiles. Unrelated monitors' settings must remain unchanged, and the complete profile must match afterward.
+- Test a combined layout/mode/scale/HDR change, including enabling a currently inactive display. Verify properties after the topology settles; Windows may reset a property during the mode transition.
+- If cloned displays are available, verify shared-source scaling is consistent and per-target HDR still works. The application must reject conflicting scale values within one clone source.
+- After a property-only failure, verify exact restoration through the existing recovery checklist. Do not automate real failure injection or display writes.
 
 ## Missing, extra, and changed displays
 

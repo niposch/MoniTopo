@@ -2,7 +2,7 @@ namespace MoniTopo.Core.Models;
 
 public static class DisplayProfileCaptureSchema
 {
-    public const int Current = 4;
+    public const int Current = 5;
     public const int MinimumActivatable = 3;
 }
 

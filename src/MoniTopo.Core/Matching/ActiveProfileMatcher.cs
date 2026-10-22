@@ -12,7 +12,15 @@ public sealed record ActiveProfileState(Guid? ProfileId, string DisplayName, boo
 
 public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolver)
 {
-    public ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current)
+    public ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current) =>
+        Match(profile, current, includeProperties: true);
+
+    // Use exactly the same topology/mode semantics for activation planning and final
+    // verification. DPI and HDR are independently mutable per-source/target properties.
+    public ProfileMatchResult MatchCoreConfiguration(DisplayProfile profile, CapturedDisplaySnapshot current) =>
+        Match(profile, current, includeProperties: false);
+
+    private ProfileMatchResult Match(DisplayProfile profile, CapturedDisplaySnapshot current, bool includeProperties)
     {
         var resolution = identityResolver.Resolve(profile, current.ConnectedDisplays);
         if (resolution.Status != IdentityResolutionStatus.Success)
@@ -53,23 +61,25 @@ public sealed class ActiveProfileMatcher(MonitorIdentityResolver identityResolve
             var saved = savedById[displayId];
             if (saved.Position != currentPath.Position - primaryOffset ||
                 saved.SourceResolution != currentPath.SourceResolution ||
-                !saved.RefreshRate.IsEquivalentTo(currentPath.RefreshRate) ||
+                !saved.RefreshRate.IsEquivalentTo(currentPath.RefreshRate, saved.ModeRequest is null ? 0.1 : 0.005) ||
                 saved.Orientation != currentPath.Orientation ||
-                saved.PathScaling != currentPath.PathScaling ||
-                saved.WindowsUiScalePercent != currentPath.WindowsUiScalePercent ||
-                saved.HdrEnabled != currentPath.HdrEnabled)
+                (saved.ModeRequest is null && saved.PathScaling != currentPath.PathScaling) ||
+                (includeProperties && (saved.WindowsUiScalePercent != currentPath.WindowsUiScalePercent ||
+                    saved.HdrEnabled != currentPath.HdrEnabled)))
             {
                 return new ProfileMatchResult(false, "display-state", resolution);
             }
 
             if ((saved.TargetSignal is { } savedSignal &&
                 (currentPath.TargetSignal is not { } currentSignal || !savedSignal.IsEquivalentTo(currentSignal))) ||
-                (profile.CaptureSchemaVersion >= 4 && saved.TargetSignal is null))
+                (profile.CaptureSchemaVersion >= 4 && saved.TargetSignal is null && saved.ModeRequest is null) ||
+                (saved.ModeRequest is { } request && (currentPath.TargetSignal is not { IsValid: true } observed ||
+                    observed.ScanLineOrdering != request.ScanLineOrdering)))
             {
                 return new ProfileMatchResult(false, "target-signal", resolution);
             }
 
-            if (((profile.CaptureSchemaVersion >= 4 || saved.DesktopImage is not null) &&
+            if ((saved.ModeRequest is null && (profile.CaptureSchemaVersion >= 4 || saved.DesktopImage is not null) &&
                 saved.DesktopImage != currentPath.DesktopImage) ||
                 (saved.BoostRefreshRate is bool boost && currentPath.BoostRefreshRate != boost))
             {

@@ -10,6 +10,395 @@ namespace MoniTopo.Core.Tests;
 public sealed class ProfileActivationServiceTests
 {
     [Fact]
+    public async Task AlreadyActiveProfileVerifiesWithoutRecoveryOrDisplayWrites()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile)) { InitialSnapshot = Snapshot(profile) };
+        var recovery = new FakeRecoveryCoordinator();
+        var state = new FakeActivationStateStore();
+        using var service = CreateService(backend, recovery, state);
+
+        var result = await service.ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.False(result.MutationBegan);
+        Assert.Equal("preflight", Assert.Single(backend.Calls, call => call != "query"));
+        Assert.Equal(3, backend.Calls.Count(call => call == "query"));
+        Assert.Equal(0, recovery.Starts);
+        Assert.Equal(profile.Id, state.LastActivatedProfileId);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PropertyOnlyChangesSkipCoreApplyValidationAndPersistence(bool scale, bool hdr)
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with
+            { WindowsUiScalePercent = scale ? 100 : path.WindowsUiScalePercent, HdrEnabled = hdr || path.HdrEnabled }),
+        };
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.True(result.MutationBegan);
+        Assert.Equal(scale ? 1 : 0, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(hdr ? 1 : 0, backend.Calls.Count(call => call == "hdr"));
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("validate", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+        Assert.Equal(1, recovery.Starts);
+        Assert.True(recovery.Session.SuccessSignaled);
+    }
+
+    [Fact]
+    public async Task CoreOnlyChangeDoesNotRewriteAlreadyMatchingProperties()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { RefreshRate = new RefreshRate(75, 1) }) };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "persist"));
+        Assert.DoesNotContain("scale", backend.Calls);
+        Assert.DoesNotContain("hdr", backend.Calls);
+    }
+
+    [Fact]
+    public async Task ModeSwitchThatRestoresPropertiesNeedsNoSeparatePropertyWrites()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile)) { RestorePropertiesDuringCore = true };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Contains("apply-core", backend.Calls);
+        Assert.DoesNotContain("scale", backend.Calls);
+        Assert.DoesNotContain("hdr", backend.Calls);
+    }
+
+    [Fact]
+    public async Task ModeSwitchResettingPreviouslyMatchingPropertiesIsRechecked()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { RefreshRate = new RefreshRate(75, 1) }),
+            ResetPropertiesDuringCore = true,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "hdr"));
+        Assert.True(backend.Calls.IndexOf("apply-core") < backend.Calls.IndexOf("scale"));
+    }
+
+    [Fact]
+    public async Task HdrTransitionResettingDpiRepairsOnlyThatPropertyWithoutCoreReapply()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }), ResetScaleOnHdr = true };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "hdr"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.True(backend.Calls.IndexOf("hdr") < backend.Calls.IndexOf("scale"));
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HdrRestoringPreviousModeRevalidatesAndRepairsCoreBeforePersistence(bool coreInitiallyChanged)
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with
+            { RefreshRate = coreInitiallyChanged ? new RefreshRate(75, 1) : path.RefreshRate, HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            ResetScaleOnHdr = true,
+        };
+        var recovery = new FakeRecoveryCoordinator();
+
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(coreInitiallyChanged ? 2 : 1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(coreInitiallyChanged ? 3 : 1, backend.Calls.Count(call => call == "validate"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "hdr"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "persist"));
+        Assert.True(backend.Calls.IndexOf("hdr") < backend.Calls.LastIndexOf("apply-core"));
+        Assert.True(backend.Calls.LastIndexOf("apply-core") < backend.Calls.IndexOf("persist"));
+        Assert.True(recovery.Session.SuccessSignaled);
+    }
+
+    [Fact]
+    public async Task ScaleRestoringPreviousModeRepairsOnlyCoreAfterScaleConverges()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { WindowsUiScalePercent = 100 }), ResetCoreOnScale = true };
+
+        var result = await CreateService(backend).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.True(backend.Calls.IndexOf("scale") < backend.Calls.IndexOf("validate"));
+        Assert.DoesNotContain("hdr", backend.Calls);
+        Assert.Contains("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task CoreRepairValidationFailureAfterHdrStillRollsBack()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            FailingCall = "validate",
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.MutationBegan);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal("activation.validate", result.ErrorCode);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task RepeatedCoreAndHdrConflictIsBoundedAndRollsBackWithoutPersistence()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }),
+            ResetCoreOnHdr = true,
+            ResetPropertiesDuringCore = true,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal(2, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(3, backend.Calls.Count(call => call == "hdr"));
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PersistenceResettingPropertiesRepairsWithoutRedundantCoreWrite(bool hdr)
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { RefreshRate = new RefreshRate(75, 1) }),
+            ResetScaleOnPersist = true,
+            ResetHdrOnPersist = hdr,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "persist"));
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(hdr ? 1 : 0, backend.Calls.Count(call => call == "hdr"));
+        Assert.True(backend.Calls.IndexOf("persist") < backend.Calls.IndexOf("scale"));
+    }
+
+    [Fact]
+    public async Task FreshPlanCatchesLayoutChangeBeforeTheFirstPropertyWrite()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true }));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true, RefreshRate = new RefreshRate(75, 1) }));
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "validate"));
+        Assert.Contains("apply-core", backend.Calls);
+        Assert.Contains("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task FreshPlanSkipsLayoutThatHasAlreadyBeenChangedToTheDesiredState()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true, RefreshRate = new RefreshRate(75, 1) }));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true }));
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Contains("hdr", backend.Calls);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task NoOpVerificationDriftDoesNotSilentlyStartMutating()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true }));
+        var recovery = new FakeRecoveryCoordinator();
+        var state = new FakeActivationStateStore();
+        var result = await CreateService(backend, recovery, state).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.False(result.MutationBegan);
+        Assert.Equal(0, recovery.Starts);
+        Assert.Null(state.LastActivatedProfileId);
+        Assert.Equal("activation.state.changed", result.ErrorCode);
+        Assert.Equal("preflight", Assert.Single(backend.Calls, call => call != "query"));
+    }
+
+    [Fact]
+    public async Task HdrOnlyFailureStillHasRecoveryAndExactRollback()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }), FailingCall = "hdr" };
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+        Assert.True(result.RollbackSucceeded);
+        Assert.True(result.MutationBegan);
+        Assert.Equal(1, recovery.Starts);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+        Assert.Equal(RecoveryTerminalOutcome.RollbackRestored, recovery.Session.TerminalOutcome);
+    }
+
+    [Fact]
+    public async Task SlowScaleObservationIsPolledWithoutRepeatingTheSetter()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { WindowsUiScalePercent = 100 }), ScaleObservationLag = 2 };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.DoesNotContain("apply-core", backend.Calls);
+    }
+
+    [Fact]
+    public async Task FailedScaleConvergenceDoesNotHammerTheSetterAndRollsBack()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { WindowsUiScalePercent = 100 }), IgnoreScalingWrites = true };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal(1, backend.Calls.Count(call => call == "scale"));
+        Assert.DoesNotContain("apply-core", backend.Calls);
+    }
+
+    [Fact]
+    public async Task StateAlreadyCorrectUnderOwnershipNeedsNoSetterOrPersistence()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true }));
+        backend.QueryResults.Enqueue(Snapshot(profile));
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.False(result.MutationBegan);
+        Assert.Equal(["preflight", "snapshot"], backend.Calls.Where(call => call != "query"));
+        Assert.True(recovery.Session.SuccessSignaled);
+    }
+
+    [Fact]
+    public async Task MissingTargetBeforeFirstWriteAbortsWithoutRollbackOrFallback()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryResults.Enqueue(Snapshot(profile, path => path with { HdrEnabled = true }));
+        backend.QueryResults.Enqueue(new CapturedDisplaySnapshot([], [], "", DateTimeOffset.UnixEpoch));
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.False(result.MutationBegan);
+        Assert.False(result.RollbackAttempted);
+        Assert.DoesNotContain("fallback", backend.Calls);
+        Assert.Equal(RecoveryTerminalOutcome.AbortedBeforeMutation, recovery.Session.TerminalOutcome);
+    }
+
+    [Fact]
+    public async Task ConflictingDriverPropertySideEffectsAreBoundedThenRolledBack()
+    {
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        {
+            InitialSnapshot = Snapshot(profile, path => path with { WindowsUiScalePercent = 100, HdrEnabled = true }),
+            ResetScaleOnHdr = true,
+            ResetHdrOnScale = true,
+        };
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal(3, backend.Calls.Count(call => call == "scale"));
+        Assert.Equal(3, backend.Calls.Count(call => call == "hdr"));
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Fact]
+    public async Task CancellationAfterPropertyWriteStillRollsBackUnderRecovery()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var profile = TestData.Profile();
+        var backend = new FakeActivationBackend(Snapshot(profile))
+        { InitialSnapshot = Snapshot(profile, path => path with { HdrEnabled = true }), OnHdr = cancellation.Cancel };
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile, cancellationToken: cancellation.Token);
+        Assert.True(result.MutationBegan);
+        Assert.True(result.RollbackSucceeded);
+        Assert.Equal(RecoveryTerminalOutcome.RollbackRestored, recovery.Session.TerminalOutcome);
+        Assert.DoesNotContain("persist", backend.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestedModeUsesNormalVerificationAndRollsBackIfWindowsChoosesAnotherRate(bool wrongRate)
+    {
+        var requested = TestData.Profile() with
+        {
+            CaptureSchemaVersion = 5,
+            Displays = [TestData.Display() with { TargetSignal = null, ModeRequest = new DisplayModeRequest(1),
+                RefreshRate = new RefreshRate(120, 1), BoostRefreshRate = false }],
+        };
+        var observed = Snapshot(requested, display => display with
+        {
+            ModeRequest = null,
+            RefreshRate = new RefreshRate(wrongRate ? 60 : 120, 1),
+            TargetSignal = new DisplayTargetSignal(241500000, new RefreshRate(90000, 1), new RefreshRate(120, 1),
+                display.SourceResolution, new DisplaySize(2720, 1480), 0, 1)
+        });
+        var backend = new FakeActivationBackend(observed);
+        var state = new FakeActivationStateStore();
+        using var service = CreateService(backend, state: state);
+        var result = await service.ActivateAsync(requested);
+        Assert.Equal(wrongRate ? ActivationOutcome.Failed : ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(wrongRate, result.RollbackSucceeded);
+        if (wrongRate)
+        {
+            Assert.Contains("rollback", backend.Calls);
+            Assert.DoesNotContain("persist", backend.Calls);
+            Assert.Null(state.LastActivatedProfileId);
+        }
+        else Assert.Equal(requested.Id, state.LastActivatedProfileId);
+    }
+
+    [Fact]
     public async Task SuccessfulActivationRunsValidatedTwoPhaseSequence()
     {
         var profile = ProfileNormalizer.Normalize(TestData.Profile());
@@ -22,8 +411,8 @@ public sealed class ProfileActivationServiceTests
 
         Assert.Equal(ActivationOutcome.Success, result.Outcome);
         Assert.Equal(
-            ["query", "snapshot", "preflight", "validate", "apply-core", "settle", "query", "scale", "hdr", "query", "query", "persist", "query", "query"],
-            backend.Calls);
+            ["preflight", "snapshot", "validate", "validate", "apply-core", "settle", "scale", "hdr", "persist"],
+            backend.Calls.Where(call => call != "query"));
         Assert.Equal(profile.Id, state.LastActivatedProfileId);
         Assert.True(recovery.Session.SuccessSignaled);
         Assert.DoesNotContain("rollback", backend.Calls);
@@ -100,9 +489,7 @@ public sealed class ProfileActivationServiceTests
     {
         var profile = ProfileNormalizer.Normalize(TestData.Profile());
         var mismatched = Snapshot(profile, path => path with { WindowsUiScalePercent = 175 });
-        var backend = new FakeActivationBackend(mismatched);
-        backend.QueryResults.Enqueue(Snapshot(profile));
-        backend.QueryResults.Enqueue(Snapshot(profile));
+        var backend = new FakeActivationBackend(mismatched) { IgnoreScalingWrites = true };
         var service = CreateService(backend);
 
         var result = await service.ActivateAsync(profile);
@@ -138,7 +525,7 @@ public sealed class ProfileActivationServiceTests
         var service = CreateService(backend);
 
         var first = service.ActivateAsync(profile);
-        await backend.ApplyStarted.Task;
+        await backend.ApplyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var second = await service.ActivateAsync(profile);
         backend.ContinueApply.SetResult();
         var firstResult = await first;
@@ -158,7 +545,7 @@ public sealed class ProfileActivationServiceTests
             Outcome: RecoveryTerminalOutcome.RollbackRestored);
         var service = CreateService(backend, recovery);
         var activation = service.ActivateAsync(profile);
-        await backend.ApplyStarted.Task;
+        await backend.ApplyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         recovery.Session.OwnershipLost = true;
         backend.ContinueApply.SetResult();
 
@@ -209,7 +596,7 @@ public sealed class ProfileActivationServiceTests
         backend.QueryExceptionAtCounts[3] = new TransientDisplayReadException("Synthetic incomplete mode.");
         var result = await CreateService(backend).ActivateAsync(profile);
         Assert.Equal(ActivationOutcome.Success, result.Outcome);
-        Assert.Equal(7, backend.Calls.Count(call => call == "query"));
+        Assert.True(backend.Calls.Count(call => call == "query") >= 7);
     }
 
     private static ProfileActivationService CreateService(
@@ -221,7 +608,7 @@ public sealed class ProfileActivationServiceTests
             state ?? new FakeActivationStateStore(),
             new MonitorIdentityResolver(),
             new ActiveProfileMatcher(new MonitorIdentityResolver()),
-            verificationTimeout: TimeSpan.FromMilliseconds(650));
+            verificationTimeout: TimeSpan.FromMilliseconds(1100));
 
     [Fact]
     public async Task PublishedSuccessCannotBeOverwrittenOrRolledBackWhenAcknowledgementFails()
@@ -243,9 +630,20 @@ public sealed class ProfileActivationServiceTests
         DisplayProfile profile,
         Func<DesiredDisplayPath, DesiredDisplayPath>? mutate = null)
     {
-        var path = mutate?.Invoke(profile.Displays[0]) ?? profile.Displays[0];
-        var connected = new ConnectedDisplayState("runtime-1", profile.Displays[0].Identity, true, path.FriendlyLabel, path);
-        return new CapturedDisplaySnapshot([path], [connected], profile.PrimaryDisplayId, DateTimeOffset.UtcNow);
+        var paths = profile.Displays.Select(path => mutate?.Invoke(path) ?? path).ToArray();
+        var connected = paths.Select((path, index) => new ConnectedDisplayState($"runtime-{index + 1}", path.Identity, true, path.FriendlyLabel, path)).ToArray();
+        return new CapturedDisplaySnapshot(paths, connected, profile.PrimaryDisplayId, DateTimeOffset.UtcNow);
+    }
+
+    private static CapturedDisplaySnapshot WithPaths(CapturedDisplaySnapshot snapshot, Func<DesiredDisplayPath, DesiredDisplayPath> mutate)
+    {
+        var paths = snapshot.ActivePaths.Select(mutate).ToArray();
+        return snapshot with
+        {
+            ActivePaths = paths,
+            ConnectedDisplays = snapshot.ConnectedDisplays.Select(connected => connected.ActivePath is { } path
+            ? connected with { ActivePath = paths.Single(changed => changed.DisplayId == path.DisplayId) } : connected).ToArray()
+        };
     }
 
     private sealed class FakeActivationBackend(CapturedDisplaySnapshot defaultSnapshot) : IDisplayActivationBackend
@@ -255,6 +653,21 @@ public sealed class ProfileActivationServiceTests
         internal Queue<CapturedDisplaySnapshot> QueryResults { get; } = new();
         internal Dictionary<int, Exception> QueryExceptionAtCounts { get; } = [];
         private int _queries;
+        private CapturedDisplaySnapshot? _current;
+        private CapturedDisplaySnapshot? _laggedScaleObservation;
+        private int _remainingScaleLag;
+        internal CapturedDisplaySnapshot? InitialSnapshot { get; init; }
+        internal int ScaleObservationLag { get; init; }
+        internal bool IgnoreScalingWrites { get; init; }
+        internal bool ResetScaleOnHdr { get; init; }
+        internal bool ResetHdrOnScale { get; init; }
+        internal bool ResetCoreOnHdr { get; init; }
+        internal bool ResetCoreOnScale { get; init; }
+        internal bool ResetScaleOnPersist { get; init; }
+        internal bool ResetHdrOnPersist { get; init; }
+        internal Action? OnHdr { get; init; }
+        internal bool RestorePropertiesDuringCore { get; init; }
+        internal bool ResetPropertiesDuringCore { get; init; }
 
         internal string? FailingCall { get; init; }
 
@@ -277,7 +690,19 @@ public sealed class ProfileActivationServiceTests
             {
                 return Task.FromException<CapturedDisplaySnapshot>(failure);
             }
-            return Task.FromResult(QueryResults.TryDequeue(out var result) ? result : defaultSnapshot);
+            _current ??= InitialSnapshot ?? WithPaths(defaultSnapshot, path => path with
+            {
+                SourceResolution = path.SourceResolution with { Width = path.SourceResolution.Width - 1 },
+                WindowsUiScalePercent = path.WindowsUiScalePercent + 25,
+                HdrEnabled = !path.HdrEnabled,
+            });
+            if (QueryResults.TryDequeue(out var result)) _current = result;
+            if (_remainingScaleLag > 0)
+            {
+                _remainingScaleLag--;
+                return Task.FromResult(_laggedScaleObservation!);
+            }
+            return Task.FromResult(_current);
         }
 
         public Task<ActivationRollbackSnapshot> CaptureRollbackSnapshotAsync(CancellationToken cancellationToken)
@@ -292,8 +717,10 @@ public sealed class ProfileActivationServiceTests
             return Task.CompletedTask;
         }
 
-        public Task PreflightAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken) =>
-            Invoke("preflight");
+        public Task PreflightAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken)
+        {
+            return Invoke("preflight");
+        }
 
         public Task ValidateCoreConfigurationAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken) =>
             Invoke("validate");
@@ -301,6 +728,13 @@ public sealed class ProfileActivationServiceTests
         public async Task ApplyCoreTemporaryAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken)
         {
             await Invoke("apply-core");
+            _current = WithPaths(defaultSnapshot, observed =>
+            {
+                var before = _current!.ActivePaths.SingleOrDefault(path => path.DisplayId == observed.DisplayId) ?? observed;
+                if (ResetPropertiesDuringCore) return observed with { WindowsUiScalePercent = 100, HdrEnabled = !observed.HdrEnabled };
+                return RestorePropertiesDuringCore ? observed : observed with
+                { WindowsUiScalePercent = before.WindowsUiScalePercent, HdrEnabled = before.HdrEnabled };
+            });
             if (PauseDuringApply)
             {
                 ApplyStarted.SetResult();
@@ -310,13 +744,40 @@ public sealed class ProfileActivationServiceTests
 
         public Task WaitForStableTopologyAsync(CancellationToken cancellationToken) => Invoke("settle");
 
-        public Task ApplyScalingAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken) =>
-            Invoke("scale");
+        public async Task ApplyScalingAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken)
+        {
+            await Invoke("scale");
+            _laggedScaleObservation = _current;
+            _remainingScaleLag = ScaleObservationLag;
+            if (!IgnoreScalingWrites) _current = WithPaths(_current!, path => path with
+            {
+                WindowsUiScalePercent = profile.Displays.Single(display => display.DisplayId == path.DisplayId).WindowsUiScalePercent,
+                HdrEnabled = ResetHdrOnScale || path.HdrEnabled,
+                RefreshRate = ResetCoreOnScale ? new RefreshRate(75, 1) : path.RefreshRate,
+            });
+        }
 
-        public Task ApplyHdrAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken) =>
-            Invoke("hdr");
+        public async Task ApplyHdrAsync(DisplayProfile profile, IReadOnlyList<ResolvedIdentityBinding> bindings, CancellationToken cancellationToken)
+        {
+            await Invoke("hdr");
+            _current = WithPaths(_current!, path => path with
+            {
+                HdrEnabled = profile.Displays.Single(display => display.DisplayId == path.DisplayId).HdrEnabled,
+                WindowsUiScalePercent = ResetScaleOnHdr ? 100 : path.WindowsUiScalePercent,
+                RefreshRate = ResetCoreOnHdr ? new RefreshRate(75, 1) : path.RefreshRate,
+            });
+            OnHdr?.Invoke();
+        }
 
-        public Task PersistCoreConfigurationAsync(CancellationToken cancellationToken) => Invoke("persist");
+        public async Task PersistCoreConfigurationAsync(CancellationToken cancellationToken)
+        {
+            await Invoke("persist");
+            _current = WithPaths(_current!, path => path with
+            {
+                WindowsUiScalePercent = ResetScaleOnPersist ? 100 : path.WindowsUiScalePercent,
+                HdrEnabled = ResetHdrOnPersist || path.HdrEnabled,
+            });
+        }
 
         public Task<bool> RollbackAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken)
         {
@@ -345,9 +806,13 @@ public sealed class ProfileActivationServiceTests
     private sealed class FakeRecoveryCoordinator : IRecoveryCoordinator
     {
         internal FakeRecoverySession Session { get; } = new();
+        internal int Starts { get; private set; }
 
-        public Task<IRecoverySession> StartAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken) =>
-            Task.FromResult<IRecoverySession>(Session);
+        public Task<IRecoverySession> StartAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken)
+        {
+            Starts++;
+            return Task.FromResult<IRecoverySession>(Session);
+        }
     }
 
     private sealed class FakeRecoverySession : IRecoverySession

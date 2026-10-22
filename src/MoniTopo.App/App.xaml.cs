@@ -190,7 +190,8 @@ public partial class App : System.Windows.Application, IDisposable
         var resolver = new MonitorIdentityResolver();
         var captureService = new CcdCaptureService();
         var matcher = new ActiveProfileMatcher(resolver);
-        var profileManagement = new ProfileManagementService(_configuration, captureService, matcher);
+        var profileManagement = new ProfileManagementService(_configuration, captureService, matcher,
+            capabilities: new DisplaySettingsCapabilities(captureService));
         _popupHotkeySettings = new PopupHotkeySettingsCoordinator(
             _configuration,
             binding => _hotkeys.RegisterPopup(binding),
