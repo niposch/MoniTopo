@@ -3,6 +3,7 @@ using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Models;
 using MoniTopo.Core.Normalization;
+using MoniTopo.Core.Recovery;
 
 namespace MoniTopo.Core.Tests;
 
@@ -21,7 +22,7 @@ public sealed class ProfileActivationServiceTests
 
         Assert.Equal(ActivationOutcome.Success, result.Outcome);
         Assert.Equal(
-            ["query", "snapshot", "preflight", "validate", "apply-core", "settle", "query", "scale", "hdr", "query", "persist", "query"],
+            ["query", "snapshot", "preflight", "validate", "apply-core", "settle", "query", "scale", "hdr", "query", "query", "persist", "query", "query"],
             backend.Calls);
         Assert.Equal(profile.Id, state.LastActivatedProfileId);
         Assert.True(recovery.Session.SuccessSignaled);
@@ -147,6 +148,70 @@ public sealed class ProfileActivationServiceTests
         Assert.Equal(1, backend.Calls.Count(call => call == "apply-core"));
     }
 
+    [Fact]
+    public async Task RecoveryTakeoverDuringPendingApplyPreventsEverySubsequentMainWrite()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile)) { PauseDuringApply = true };
+        var recovery = new FakeRecoveryCoordinator();
+        recovery.Session.CompanionResult = new RecoveryResult(2, Guid.NewGuid(), true, true, "Restored.", DateTimeOffset.UtcNow,
+            Outcome: RecoveryTerminalOutcome.RollbackRestored);
+        var service = CreateService(backend, recovery);
+        var activation = service.ActivateAsync(profile);
+        await backend.ApplyStarted.Task;
+        recovery.Session.OwnershipLost = true;
+        backend.ContinueApply.SetResult();
+
+        var result = await activation;
+
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.True(result.RollbackSucceeded);
+        Assert.DoesNotContain("scale", backend.Calls);
+        Assert.DoesNotContain("hdr", backend.Calls);
+        Assert.DoesNotContain("rollback", backend.Calls);
+        Assert.DoesNotContain("fallback", backend.Calls);
+        Assert.DoesNotContain("persist", backend.Calls);
+        Assert.Equal(RecoveryTerminalOutcome.Unresolved, recovery.Session.TerminalOutcome);
+    }
+
+    [Fact]
+    public async Task OwnershipLostBeforeMutationPublishesAbortWithoutDeletingLiveRecoveryPayload()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        var recovery = new FakeRecoveryCoordinator();
+        recovery.Session.OwnershipLost = true;
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+        Assert.False(result.MutationBegan);
+        Assert.Equal(RecoveryTerminalOutcome.AbortedBeforeMutation, recovery.Session.TerminalOutcome);
+        Assert.DoesNotContain("discard-snapshot", backend.Calls);
+        Assert.DoesNotContain("apply-core", backend.Calls);
+    }
+
+    [Fact]
+    public async Task FailedMainRollbackAndFallbackRemainUnresolvedForIndependentRecovery()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile)) { FailingCall = "hdr", RollbackResult = false };
+        var recovery = new FakeRecoveryCoordinator();
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+        Assert.False(result.RollbackSucceeded);
+        Assert.False(result.EmergencyFallbackUsed);
+        Assert.Equal(RecoveryTerminalOutcome.Unresolved, recovery.Session.TerminalOutcome);
+        Assert.Contains("Open Windows Display Settings", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PropertyVerificationRetriesTransientReadsUntilTwoMatchingObservations()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        backend.QueryExceptionAtCounts[3] = new TransientDisplayReadException("Synthetic incomplete mode.");
+        var result = await CreateService(backend).ActivateAsync(profile);
+        Assert.Equal(ActivationOutcome.Success, result.Outcome);
+        Assert.Equal(7, backend.Calls.Count(call => call == "query"));
+    }
+
     private static ProfileActivationService CreateService(
         FakeActivationBackend backend,
         FakeRecoveryCoordinator? recovery = null,
@@ -155,7 +220,24 @@ public sealed class ProfileActivationServiceTests
             recovery ?? new FakeRecoveryCoordinator(),
             state ?? new FakeActivationStateStore(),
             new MonitorIdentityResolver(),
-            new ActiveProfileMatcher(new MonitorIdentityResolver()));
+            new ActiveProfileMatcher(new MonitorIdentityResolver()),
+            verificationTimeout: TimeSpan.FromMilliseconds(650));
+
+    [Fact]
+    public async Task PublishedSuccessCannotBeOverwrittenOrRolledBackWhenAcknowledgementFails()
+    {
+        var profile = ProfileNormalizer.Normalize(TestData.Profile());
+        var backend = new FakeActivationBackend(Snapshot(profile));
+        var recovery = new FakeRecoveryCoordinator();
+        recovery.Session.FailAfterPublication = true;
+
+        var result = await CreateService(backend, recovery).ActivateAsync(profile);
+
+        Assert.Equal(ActivationOutcome.Failed, result.Outcome);
+        Assert.Equal(RecoveryTerminalOutcome.ActivationSucceeded, recovery.Session.TerminalOutcome);
+        Assert.DoesNotContain("rollback", backend.Calls);
+        Assert.DoesNotContain("fallback", backend.Calls);
+    }
 
     private static CapturedDisplaySnapshot Snapshot(
         DisplayProfile profile,
@@ -171,6 +253,8 @@ public sealed class ProfileActivationServiceTests
         internal List<string> Calls { get; } = [];
 
         internal Queue<CapturedDisplaySnapshot> QueryResults { get; } = new();
+        internal Dictionary<int, Exception> QueryExceptionAtCounts { get; } = [];
+        private int _queries;
 
         internal string? FailingCall { get; init; }
 
@@ -189,6 +273,10 @@ public sealed class ProfileActivationServiceTests
         public Task<CapturedDisplaySnapshot> QueryCurrentAsync(CancellationToken cancellationToken)
         {
             Calls.Add("query");
+            if (QueryExceptionAtCounts.TryGetValue(++_queries, out var failure))
+            {
+                return Task.FromException<CapturedDisplaySnapshot>(failure);
+            }
             return Task.FromResult(QueryResults.TryDequeue(out var result) ? result : defaultSnapshot);
         }
 
@@ -264,6 +352,30 @@ public sealed class ProfileActivationServiceTests
 
     private sealed class FakeRecoverySession : IRecoverySession
     {
+        internal bool FailAfterPublication { get; set; }
+        internal bool OwnershipLost { get; set; }
+        internal RecoveryResult? CompanionResult { get; set; }
+        internal RecoveryTerminalOutcome? TerminalOutcome { get; private set; }
+        public bool IsTerminalPublished => TerminalOutcome is not null;
+
+        public Task EnsureOwnershipAsync(CancellationToken cancellationToken) => OwnershipLost
+            ? Task.FromException(new RecoveryOwnershipLostException()) : Task.CompletedTask;
+
+        public async Task<RecoveryResult?> CompleteAsync(RecoveryTerminalOutcome outcome, CancellationToken cancellationToken)
+        {
+            TerminalOutcome ??= outcome;
+            if (FailAfterPublication) throw new ActivationFailureException("activation.recovery.unacknowledged", "Synthetic acknowledgement failure.");
+            if (outcome == RecoveryTerminalOutcome.ActivationSucceeded)
+            {
+                await SignalSuccessAsync(cancellationToken);
+            }
+            else
+            {
+                await SignalFailureHandledAsync(outcome == RecoveryTerminalOutcome.RollbackRestored, cancellationToken);
+            }
+
+            return CompanionResult;
+        }
         internal bool SuccessSignaled { get; private set; }
 
         internal bool FailureHandled { get; private set; }

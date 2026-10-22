@@ -8,7 +8,8 @@ internal sealed record RollbackDisplayProperty(
     NativeAdapterId TargetAdapterId,
     uint TargetId,
     int WindowsScalePercent,
-    bool HdrEnabled);
+    bool HdrEnabled,
+    string? TargetDevicePath = null);
 
 internal sealed record RollbackDisplayState(
     NativeDisplaySnapshot CoreConfiguration,
@@ -17,7 +18,7 @@ internal sealed record RollbackDisplayState(
 internal static class DisplayRollbackSnapshotSerializer
 {
     private const uint Magic = 0x4D545242;
-    private const int Version = 1;
+    private const int Version = 2;
     private const int MaximumPathCount = 256;
     private const int MaximumModeCount = 1024;
     private const int MaximumPropertyCount = 256;
@@ -43,6 +44,7 @@ internal static class DisplayRollbackSnapshotSerializer
                 writer.Write(property.TargetId);
                 writer.Write(property.WindowsScalePercent);
                 writer.Write(property.HdrEnabled);
+                writer.Write(property.TargetDevicePath ?? string.Empty);
             }
         }
 
@@ -53,7 +55,9 @@ internal static class DisplayRollbackSnapshotSerializer
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var reader = new BinaryReader(stream);
-        if (reader.ReadUInt32() != Magic || reader.ReadInt32() != Version)
+        var magic = reader.ReadUInt32();
+        var version = reader.ReadInt32();
+        if (magic != Magic || version is not (1 or Version))
         {
             throw new InvalidDataException("The display rollback snapshot version is not supported.");
         }
@@ -70,7 +74,8 @@ internal static class DisplayRollbackSnapshotSerializer
                 ReadAdapter(reader),
                 reader.ReadUInt32(),
                 reader.ReadInt32(),
-                reader.ReadBoolean());
+                reader.ReadBoolean(),
+                version >= 2 ? reader.ReadString() : null);
         }
 
         if (stream.Position != stream.Length)

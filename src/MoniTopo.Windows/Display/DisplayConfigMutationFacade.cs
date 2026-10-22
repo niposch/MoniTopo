@@ -55,6 +55,9 @@ internal sealed class User32DisplayConfigMutationApi : IDisplayConfigMutationApi
 internal sealed class DisplayConfigMutationFacade
 {
     private readonly IDisplayConfigMutationApi _api;
+    private Action? _ensureWriterOwnership;
+
+    internal void SetMutationGuard(Action? ensureWriterOwnership) => _ensureWriterOwnership = ensureWriterOwnership;
 
     internal DisplayConfigMutationFacade(DisplayMutationAuthorization authorization)
         : this(authorization, new User32DisplayConfigMutationApi())
@@ -97,23 +100,31 @@ internal sealed class DisplayConfigMutationFacade
         "activation.persistence.failed",
         "Windows could not save the verified display topology.");
 
-    internal bool ApplyExtendedFallback() =>
-        _api.SetDisplayConfig(
+    internal bool ApplyExtendedFallback()
+    {
+        _ensureWriterOwnership?.Invoke();
+        var result = _api.SetDisplayConfig(
             [],
             [],
             SetDisplayConfigFlags.TopologyExtend |
             SetDisplayConfigFlags.Apply |
-            SetDisplayConfigFlags.PathPersistIfRequired) == DisplayConfigNativeFacade.ErrorSuccess;
+            SetDisplayConfigFlags.PathPersistIfRequired);
+        _ensureWriterOwnership?.Invoke();
+        return result == DisplayConfigNativeFacade.ErrorSuccess;
+    }
 
     internal void SetDpiScale(NativeAdapterId adapterId, uint sourceId, int relativeScale)
     {
+        _ensureWriterOwnership?.Invoke();
         var packet = new NativeDpiScaleSet
         {
             Header = CreateHeader(UndocumentedDpiScaleContract.SetRequestType, Marshal.SizeOf<NativeDpiScaleSet>(), adapterId, sourceId),
             RelativeScale = relativeScale,
         };
+        var result = _api.SetDpiScale(ref packet);
+        _ensureWriterOwnership?.Invoke();
         ThrowIfFailed(
-            _api.SetDpiScale(ref packet),
+            result,
             "activation.scaling.failed",
             "Windows could not apply the saved display scaling.",
             "DisplayConfigSetDeviceInfo (DPI scale)");
@@ -121,12 +132,14 @@ internal sealed class DisplayConfigMutationFacade
 
     internal void SetHdrState(NativeAdapterId adapterId, uint targetId, bool enabled)
     {
+        _ensureWriterOwnership?.Invoke();
         var hdrPacket = new NativeHdrStateSet
         {
             Header = CreateHeader(16, Marshal.SizeOf<NativeHdrStateSet>(), adapterId, targetId),
             Value = enabled ? 1u : 0u,
         };
         var hdrResult = _api.SetHdrState(ref hdrPacket);
+        _ensureWriterOwnership?.Invoke();
         if (hdrResult == DisplayConfigNativeFacade.ErrorSuccess)
         {
             return;
@@ -146,8 +159,11 @@ internal sealed class DisplayConfigMutationFacade
             Header = CreateHeader(10, Marshal.SizeOf<NativeAdvancedColorStateSet>(), adapterId, targetId),
             Value = enabled ? 1u : 0u,
         };
+        _ensureWriterOwnership?.Invoke();
+        var colorResult = _api.SetAdvancedColorState(ref packet);
+        _ensureWriterOwnership?.Invoke();
         ThrowIfFailed(
-            _api.SetAdvancedColorState(ref packet),
+            colorResult,
             "activation.hdr.failed",
             "Windows could not apply the saved HDR state.",
             "DisplayConfigSetDeviceInfo (Advanced Color)");
@@ -155,7 +171,9 @@ internal sealed class DisplayConfigMutationFacade
 
     private void SetCore(NativeDisplaySnapshot plan, uint flags, string errorCode, string message)
     {
+        _ensureWriterOwnership?.Invoke();
         var nativeErrorCode = _api.SetDisplayConfig(plan.Paths, plan.Modes, flags);
+        _ensureWriterOwnership?.Invoke();
         if (nativeErrorCode != DisplayConfigNativeFacade.ErrorSuccess)
         {
             throw new DisplayActivationException(

@@ -34,7 +34,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     private readonly string _recoveryRoot;
     private readonly TimeProvider _timeProvider;
     private NativeDisplaySnapshot? _pendingPlan;
-    private NativeDisplaySnapshot? _pendingCompatibilityPlan;
+    private readonly List<NativeDisplaySnapshot> _candidatePlans = [];
 
     public GuardedDisplayActivationBackend(DisplayMutationAuthorization authorization)
         : this(
@@ -67,7 +67,21 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
     }
 
     public Task<CapturedDisplaySnapshot> QueryCurrentAsync(CancellationToken cancellationToken) =>
-        _captureService.CaptureAsync(cancellationToken);
+        QueryCurrentWithClassificationAsync(cancellationToken);
+
+    public void SetMutationGuard(Action? ensureWriterOwnership) => _mutation.SetMutationGuard(ensureWriterOwnership);
+
+    private async Task<CapturedDisplaySnapshot> QueryCurrentWithClassificationAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _captureService.CaptureAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DisplayCaptureException exception) when (exception.IsTransient)
+        {
+            throw new TransientDisplayReadException(exception.Message, exception);
+        }
+    }
 
     public Task<ActivationRollbackSnapshot> CaptureRollbackSnapshotAsync(CancellationToken cancellationToken)
     {
@@ -119,7 +133,7 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         EnsureInteractiveSession();
         var available = QueryAll();
         _pendingPlan = null;
-        _pendingCompatibilityPlan = null;
+        _candidatePlans.Clear();
         var plan = DisplayConfigurationPlanBuilder.Build(profile, bindings, available);
         foreach (var display in profile.Displays)
         {
@@ -132,13 +146,23 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         }
 
         _pendingPlan = plan;
-        if (plan.Paths.Any(path => !path.SupportsVirtualMode))
+        for (var routingIndex = 0; routingIndex < 32; routingIndex++)
         {
-            _pendingCompatibilityPlan = DisplayConfigurationPlanBuilder.Build(
-                profile,
-                bindings,
-                available,
-                forceVirtualModeIndexes: true);
+            try
+            {
+                var candidate = routingIndex == 0 ? plan : DisplayConfigurationPlanBuilder.Build(
+                    profile, bindings, available, sourceRoutingIndex: routingIndex);
+                _candidatePlans.Add(candidate);
+                if (candidate.Paths.Any(path => !path.SupportsVirtualMode) && profile.Displays.Any(display => display.DesktopImage is null))
+                {
+                    _candidatePlans.Add(DisplayConfigurationPlanBuilder.Build(
+                        profile, bindings, available, forceVirtualModeIndexes: true, sourceRoutingIndex: routingIndex));
+                }
+            }
+            catch (ActivationFailureException exception) when (routingIndex > 0 && exception.ErrorCode == "activation.topology.sources-unavailable")
+            {
+                break;
+            }
         }
 
         return Task.CompletedTask;
@@ -150,33 +174,25 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var primaryPlan = GetPendingPlan();
-        try
+        _ = GetPendingPlan();
+        var failures = new List<DisplayActivationException>();
+        foreach (var candidate in _candidatePlans)
         {
-            _mutation.Validate(primaryPlan);
-            _pendingCompatibilityPlan = null;
-        }
-        catch (DisplayActivationException primaryFailure) when (_pendingCompatibilityPlan is not null)
-        {
-            var compatibilityPlan = _pendingCompatibilityPlan;
             try
             {
-                _mutation.Validate(compatibilityPlan);
-                _pendingPlan = compatibilityPlan;
-                _pendingCompatibilityPlan = null;
+                _mutation.Validate(candidate);
+                _pendingPlan = candidate;
+                return Task.CompletedTask;
             }
-            catch (DisplayActivationException compatibilityFailure)
+            catch (DisplayActivationException failure)
             {
-                throw new ActivationFailureException(
-                    primaryFailure.ErrorCode,
-                    primaryFailure.Message,
-                    compatibilityFailure,
-                    $"Documented mode-index validation: {primaryFailure.TechnicalDetails} " +
-                    $"Driver-compatible packed-index validation: {compatibilityFailure.TechnicalDetails}");
+                failures.Add(failure);
             }
         }
 
-        return Task.CompletedTask;
+        var firstFailure = failures[0];
+        throw new ActivationFailureException(firstFailure.ErrorCode, firstFailure.Message, firstFailure,
+            string.Join(" ", failures.Select((failure, index) => $"Candidate {index + 1}: {failure.TechnicalDetails}")));
     }
 
     public Task ApplyCoreTemporaryAsync(
@@ -191,19 +207,34 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
 
     public async Task WaitForStableTopologyAsync(CancellationToken cancellationToken)
     {
-        var deadline = _timeProvider.GetUtcNow() + StableTimeout;
+        _ = await WaitForStableCoreAsync(_query, _timeProvider, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<NativeDisplaySnapshot> WaitForStableCoreAsync(
+        IDisplayConfigNativeFacade query, TimeProvider timeProvider, CancellationToken cancellationToken)
+    {
+        var started = timeProvider.GetTimestamp();
         string? previousSignature = null;
-        while (_timeProvider.GetUtcNow() < deadline)
+        while (timeProvider.GetElapsedTime(started) < StableTimeout)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var currentSignature = CreateCoreSignature(QueryActive());
-            if (string.Equals(previousSignature, currentSignature, StringComparison.Ordinal))
+            try
             {
-                return;
-            }
+                var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                var currentSignature = CreateCoreSignature(current);
+                if (current.Paths.Any(path => (path.Flags & ActivePath) != 0) &&
+                    string.Equals(previousSignature, currentSignature, StringComparison.Ordinal))
+                {
+                    return current;
+                }
 
-            previousSignature = currentSignature;
-            await Task.Delay(StableObservationInterval, _timeProvider, cancellationToken).ConfigureAwait(false);
+                previousSignature = currentSignature;
+            }
+            catch (Exception exception) when (IsTransientTopologyRead(exception))
+            {
+                previousSignature = null;
+            }
+            await Task.Delay(StableObservationInterval, timeProvider, cancellationToken).ConfigureAwait(false);
         }
 
         throw new ActivationFailureException(
@@ -211,34 +242,38 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             "The displays did not settle after Windows changed the topology.");
     }
 
-    public Task ApplyScalingAsync(
+    public async Task ApplyScalingAsync(
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var active = QueryActive();
         foreach (var display in profile.Displays)
         {
-            var path = FindCurrentPath(display.DisplayId, bindings, active);
-            var relativeScale = ResolveRelativeScale(path.SourceInfo, display.WindowsUiScalePercent);
-            _mutation.SetDpiScale(path.SourceInfo.AdapterId, path.SourceInfo.Id, relativeScale);
+            var setting = await ReadWithRetryAsync(async () =>
+            {
+                var path = await ResolveCurrentPropertyPathAsync(profile, display.DisplayId, cancellationToken).ConfigureAwait(false);
+                return (Path: path, Relative: ResolveRelativeScale(path.SourceInfo, display.WindowsUiScalePercent));
+            }, _timeProvider, cancellationToken).ConfigureAwait(false);
+            _mutation.SetDpiScale(setting.Path.SourceInfo.AdapterId, setting.Path.SourceInfo.Id, setting.Relative);
         }
-
-        return Task.CompletedTask;
     }
 
-    public Task ApplyHdrAsync(
+    public async Task ApplyHdrAsync(
         DisplayProfile profile,
         IReadOnlyList<ResolvedIdentityBinding> bindings,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var active = QueryActive();
         foreach (var display in profile.Displays)
         {
-            var path = FindCurrentPath(display.DisplayId, bindings, active);
-            var hdr = _query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            var setting = await ReadWithRetryAsync(async () =>
+            {
+                var path = await ResolveCurrentPropertyPathAsync(profile, display.DisplayId, cancellationToken).ConfigureAwait(false);
+                return (Path: path, Hdr: _query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id));
+            }, _timeProvider, cancellationToken).ConfigureAwait(false);
+            var path = setting.Path;
+            var hdr = setting.Hdr;
             if (display.HdrEnabled && (!hdr.IsSupported || hdr.IsLimitedByPolicy))
             {
                 throw new ActivationFailureException(
@@ -252,74 +287,116 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             }
         }
 
-        return Task.CompletedTask;
+    }
+
+    private async Task<NativePathInfo> ResolveCurrentPropertyPathAsync(DisplayProfile profile, string displayId,
+        CancellationToken cancellationToken)
+    {
+        var started = _timeProvider.GetTimestamp();
+        while (_timeProvider.GetElapsedTime(started) < StableTimeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var current = await QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
+                var resolution = new MonitorIdentityResolver().Resolve(profile, current.ConnectedDisplays);
+                if (resolution.Status == IdentityResolutionStatus.Success)
+                {
+                    return FindCurrentPath(displayId, resolution.Bindings, QueryActive());
+                }
+            }
+            catch (Exception exception) when (exception is TransientDisplayReadException || IsTransientTopologyRead(exception) ||
+                exception is ActivationFailureException { ErrorCode: "activation.topology.target-missing" })
+            { }
+
+            await Task.Delay(StableObservationInterval, _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new ActivationFailureException("activation.identity.changed", "The displays could not be identified while Windows changed their settings.");
     }
 
     public Task PersistCoreConfigurationAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _mutation.Persist(GetPendingPlan());
+        _ = GetPendingPlan();
+        // Scale/HDR transitions can reassign source addresses. The preceding complete
+        // profile verification established the desired state; persist that observed
+        // routing instead of applying the pre-transition plan for a second time.
+        var observed = QueryActive();
+        _mutation.Validate(observed);
+        _mutation.Persist(observed);
         return Task.CompletedTask;
     }
 
     public Task<bool> RollbackAsync(ActivationRollbackSnapshot snapshot, CancellationToken cancellationToken) =>
-        Task.FromResult(RestoreSnapshot(snapshot.DataPath, _query, _mutation, cancellationToken));
+        RestoreSnapshotAsync(snapshot.DataPath, _query, _mutation, cancellationToken, _timeProvider);
 
-    public Task<bool> EmergencyFallbackAsync(CancellationToken cancellationToken)
+    public async Task<bool> EmergencyFallbackAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(_mutation.ApplyExtendedFallback());
+        if (!_mutation.ApplyExtendedFallback())
+        {
+            return false;
+        }
+
+        return await VerifyFallbackAsync(_query, _timeProvider, cancellationToken).ConfigureAwait(false);
     }
 
     internal static bool RestoreSnapshot(
         string dataPath,
         IDisplayConfigNativeFacade query,
         DisplayConfigMutationFacade mutation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        RestoreSnapshotAsync(dataPath, query, mutation, cancellationToken).GetAwaiter().GetResult();
+
+    internal static async Task<bool> RestoreSnapshotAsync(
+        string dataPath, IDisplayConfigNativeFacade query, DisplayConfigMutationFacade mutation,
+        CancellationToken cancellationToken, TimeProvider? timeProvider = null)
     {
+        var clock = timeProvider ?? TimeProvider.System;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             var rollback = DisplayRollbackSnapshotSerializer.Read(dataPath);
             mutation.ApplyTemporary(rollback.CoreConfiguration);
+            _ = await WaitForStableCoreAsync(query, clock, cancellationToken).ConfigureAwait(false);
             foreach (var property in rollback.Properties)
             {
-                var relativeScale = ResolveRelativeScale(query, property.SourceAdapterId, property.SourceId, property.WindowsScalePercent);
-                mutation.SetDpiScale(property.SourceAdapterId, property.SourceId, relativeScale);
-                var hdr = query.GetHdrState(property.TargetAdapterId, property.TargetId);
+                var scaling = await ReadWithRetryAsync(() =>
+                {
+                    var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                    var path = ResolveRollbackPath(property, current, query);
+                    return Task.FromResult((Path: path, Relative: ResolveRelativeScale(query, path.SourceInfo.AdapterId, path.SourceInfo.Id, property.WindowsScalePercent)));
+                }, clock, cancellationToken).ConfigureAwait(false);
+                mutation.SetDpiScale(scaling.Path.SourceInfo.AdapterId, scaling.Path.SourceInfo.Id, scaling.Relative);
+                // HDR can itself trigger source reassignment. Never carry a saved source address
+                // from before the topology change into a device-info mutation.
+                var color = await ReadWithRetryAsync(() =>
+                {
+                    var active = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                    var path = ResolveRollbackPath(property, active, query);
+                    return Task.FromResult((Path: path, Hdr: query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id)));
+                }, clock, cancellationToken).ConfigureAwait(false);
+                var path = color.Path;
+                var hdr = color.Hdr;
                 if (hdr.IsSupported && !hdr.IsLimitedByPolicy && hdr.IsEnabled != property.HdrEnabled)
                 {
-                    mutation.SetHdrState(property.TargetAdapterId, property.TargetId, property.HdrEnabled);
+                    mutation.SetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id, property.HdrEnabled);
                 }
             }
 
-            mutation.Persist(rollback.CoreConfiguration);
-            var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
-            if (!string.Equals(
-                CreateCoreSignature(rollback.CoreConfiguration),
-                CreateCoreSignature(current),
-                StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            foreach (var property in rollback.Properties)
-            {
-                var scale = new DisplayScaleService(query).Query(new DisplaySourceAddress(
-                    property.SourceAdapterId.LowPart,
-                    property.SourceAdapterId.HighPart,
-                    property.SourceId));
-                var hdr = query.GetHdrState(property.TargetAdapterId, property.TargetId);
-                var hdrEnabled = hdr.IsSupported && hdr.IsEnabled;
-                if (!scale.IsSupported || scale.CurrentPercent != property.WindowsScalePercent || hdrEnabled != property.HdrEnabled)
-                {
-                    return false;
-                }
-            }
-
+            var verified = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
+            // Persist the observed, verified routing, not the pre-change source addresses.
+            mutation.Validate(verified);
+            mutation.Persist(verified);
+            _ = await WaitForRollbackMatchAsync(rollback, query, clock, cancellationToken).ConfigureAwait(false);
             return true;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or ActivationFailureException)
+        catch (RecoveryOwnershipLostException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or ActivationFailureException or DisplayCaptureException)
         {
             return false;
         }
@@ -335,7 +412,8 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
             path.TargetInfo.AdapterId,
             path.TargetInfo.Id,
             scale.CurrentPercent!.Value,
-            hdr.IsSupported && hdr.IsEnabled);
+            hdr.IsSupported && hdr.IsEnabled,
+            _query.GetTargetName(path.TargetInfo.AdapterId, path.TargetInfo.Id).DevicePath);
     }
 
     private void ValidateScaleForPreflight(
@@ -394,6 +472,14 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         int desiredPercent)
     {
         var (errorCode, packet) = query.TryGetDpiScale(adapterId, sourceId);
+        if (errorCode != DisplayConfigNativeFacade.ErrorSuccess)
+        {
+            var failure = new DisplayCaptureException(errorCode, "Windows could not read the current display scaling capability.");
+            if (failure.IsTransient)
+            {
+                throw failure;
+            }
+        }
         if (errorCode != DisplayConfigNativeFacade.ErrorSuccess ||
             !DisplayScaleService.TryResolveRelativeScale(packet, desiredPercent, out var relativeScale))
         {
@@ -460,16 +546,124 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
         }
     }
 
-    private static string CreateCoreSignature(NativeDisplaySnapshot snapshot)
+    private static bool IsTransientTopologyRead(Exception exception) =>
+        exception is InvalidDataException or DisplayCaptureException { IsTransient: true };
+
+    private static async Task<T> ReadWithRetryAsync<T>(Func<Task<T>> read, TimeProvider clock, CancellationToken cancellationToken)
     {
-        var activePaths = snapshot.Paths.Where(path => (path.Flags & ActivePath) != 0);
+        var started = clock.GetTimestamp();
+        while (clock.GetElapsedTime(started) < StableTimeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try { return await read().ConfigureAwait(false); }
+            catch (Exception exception) when (IsTransientTopologyRead(exception) || exception is TransientDisplayReadException) { }
+            await Task.Delay(StableObservationInterval, clock, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new ActivationFailureException("activation.read.unstable", "Windows did not provide a stable display state before the operation timed out.");
+    }
+
+    private static NativePathInfo ResolveRollbackPath(RollbackDisplayProperty property,
+        NativeDisplaySnapshot active, IDisplayConfigNativeFacade query)
+    {
+        var paths = active.Paths.Where(path => (path.Flags & ActivePath) != 0).ToArray();
+        if (!string.IsNullOrWhiteSpace(property.TargetDevicePath))
+        {
+            var matches = paths.Where(path => string.Equals(
+                query.GetTargetName(path.TargetInfo.AdapterId, path.TargetInfo.Id).DevicePath,
+                property.TargetDevicePath, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length == 1)
+            {
+                return matches[0];
+            }
+
+            throw new InvalidDataException("The rollback target could not be identified uniquely after the topology change.");
+        }
+
+        var matched = paths.Where(path => path.TargetInfo.AdapterId == property.TargetAdapterId && path.TargetInfo.Id == property.TargetId).ToArray();
+        return matched.Length == 1 ? matched[0] : throw new InvalidDataException("The rollback target is temporarily unavailable.");
+    }
+
+    private static async Task<NativeDisplaySnapshot> WaitForRollbackMatchAsync(RollbackDisplayState rollback,
+        IDisplayConfigNativeFacade query, TimeProvider clock, CancellationToken cancellationToken)
+    {
+        var started = clock.GetTimestamp();
+        var matched = false;
+        while (clock.GetElapsedTime(started) < StableTimeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var current = query.Query(QueryOnlyActivePaths | QueryVirtualModeAware | QueryVirtualRefreshRateAware);
+                var canonicalTargets = new Dictionary<string, string>(StringComparer.Ordinal);
+                var propertiesMatch = true;
+                foreach (var property in rollback.Properties)
+                {
+                    var path = ResolveRollbackPath(property, current, query);
+                    canonicalTargets[TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)] = TargetKey(property.TargetAdapterId, property.TargetId);
+                    var scale = new DisplayScaleService(query).Query(new DisplaySourceAddress(
+                        path.SourceInfo.AdapterId.LowPart, path.SourceInfo.AdapterId.HighPart, path.SourceInfo.Id));
+                    var hdr = query.GetHdrState(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+                    propertiesMatch &= scale.IsSupported && scale.CurrentPercent == property.WindowsScalePercent &&
+                        (hdr.IsSupported && hdr.IsEnabled) == property.HdrEnabled;
+                }
+
+                var equal = propertiesMatch && string.Equals(CreateCoreSignature(rollback.CoreConfiguration),
+                    CreateCoreSignature(current, canonicalTargets), StringComparison.Ordinal);
+                if (equal && matched)
+                {
+                    return current;
+                }
+
+                matched = equal;
+            }
+            catch (Exception exception) when (IsTransientTopologyRead(exception))
+            {
+                matched = false;
+            }
+
+            await Task.Delay(StableObservationInterval, clock, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new ActivationFailureException("activation.rollback.verification", "Windows did not restore every previous display setting.");
+    }
+
+    internal static async Task<bool> VerifyFallbackAsync(IDisplayConfigNativeFacade query, TimeProvider clock,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var snapshot = await WaitForStableCoreAsync(query, clock, cancellationToken).ConfigureAwait(false);
+            return snapshot.Paths.Any(path => (path.Flags & ActivePath) != 0 &&
+                path.TryResolveSourceModeInfoIndex(snapshot.Modes, out var index) &&
+                snapshot.Modes[index].Mode.SourceMode.Width > 0 && snapshot.Modes[index].Mode.SourceMode.Height > 0);
+        }
+        catch (Exception exception) when (exception is DisplayCaptureException or ActivationFailureException or InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    private static string CreateCoreSignature(NativeDisplaySnapshot snapshot,
+        IReadOnlyDictionary<string, string>? canonicalTargets = null)
+    {
+        var activePaths = snapshot.Paths.Where(path => (path.Flags & ActivePath) != 0).ToArray();
+        string Target(NativePathInfo path)
+        {
+            var key = TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+            return canonicalTargets?.GetValueOrDefault(key) ?? key;
+        }
+
+        var sourceGroups = activePaths.GroupBy(path => (path.SourceInfo.AdapterId, path.SourceInfo.Id))
+            .ToDictionary(group => group.Key, group => string.Join(',', group.Select(Target).OrderBy(key => key, StringComparer.Ordinal)));
         return string.Join(
             '|',
-            activePaths.Select(path => CreatePathSignature(path, snapshot.Modes))
+            activePaths.Select(path => CreatePathSignature(path, snapshot.Modes, Target(path),
+                sourceGroups[(path.SourceInfo.AdapterId, path.SourceInfo.Id)]))
                 .OrderBy(value => value, StringComparer.Ordinal));
     }
 
-    private static string CreatePathSignature(NativePathInfo path, NativeModeInfo[] modes)
+    private static string CreatePathSignature(NativePathInfo path, NativeModeInfo[] modes, string targetKey, string sourceGroup)
     {
         if (!path.TryResolveSourceModeInfoIndex(modes, out var sourceModeIndex) ||
             !path.TryResolveTargetModeInfoIndex(modes, out var targetModeIndex))
@@ -479,13 +673,15 @@ public sealed class GuardedDisplayActivationBackend : IDisplayActivationBackend
 
         var source = modes[sourceModeIndex].Mode.SourceMode;
         var target = modes[targetModeIndex].Mode.TargetMode.TargetVideoSignalInfo;
-        return $"{TargetKey(path.TargetInfo.AdapterId, path.TargetInfo.Id)};" +
-            $"{path.SourceInfo.AdapterId.StableKey}:{path.SourceInfo.Id}:{path.SourceInfo.CloneGroupId};" +
+        var desktop = path.TryResolveDesktopModeInfoIndex(modes, out var desktopIndex)
+            ? modes[desktopIndex].Mode.DesktopImageInfo : (NativeDesktopImageInfo?)null;
+        return $"{targetKey};{sourceGroup};" +
             $"{source.Width}x{source.Height}@{source.Position.X},{source.Position.Y};" +
             $"{path.TargetInfo.Rotation};{path.TargetInfo.Scaling};" +
             $"{path.TargetInfo.RefreshRate.Numerator}/{path.TargetInfo.RefreshRate.Denominator};" +
             $"{target.PixelRate}:{target.ActiveSize.Width}x{target.ActiveSize.Height}:" +
-            $"{target.TotalSize.Width}x{target.TotalSize.Height}:{target.ScanLineOrdering}";
+            $"{target.TotalSize.Width}x{target.TotalSize.Height}:{target.ScanLineOrdering};" +
+            $"{path.Flags & NativeDisplayConfigPathFlags.BoostRefreshRate};{desktop?.PathSourceSize}:{desktop?.DesktopImageRegion}:{desktop?.DesktopImageClip}";
     }
 
     private static string TargetKey(NativeAdapterId adapterId, uint targetId) => $"{adapterId.StableKey}:T{targetId}";
@@ -509,21 +705,35 @@ public sealed class DisplayRollbackExecutor : IRecoveryRollbackExecutor
         _mutation = mutation;
     }
 
-    public Task<bool> RollbackAsync(string rollbackDataPath, CancellationToken cancellationToken) =>
-        Task.FromResult(RestoreWithFallback(rollbackDataPath, cancellationToken));
+    public async Task<bool> RollbackAsync(string rollbackDataPath, CancellationToken cancellationToken) =>
+        (await RecoverAsync(rollbackDataPath, cancellationToken).ConfigureAwait(false)).Restored;
 
-    private bool RestoreWithFallback(string rollbackDataPath, CancellationToken cancellationToken)
+    public async Task<RecoveryRollbackResult> RecoverAsync(string rollbackDataPath, CancellationToken cancellationToken)
     {
-        var restored = GuardedDisplayActivationBackend.RestoreSnapshot(
-            rollbackDataPath,
-            _query,
-            _mutation,
-            cancellationToken);
-        if (!restored)
+        var restored = false;
+        try
         {
-            _ = _mutation.ApplyExtendedFallback();
+            restored = await GuardedDisplayActivationBackend.RestoreSnapshotAsync(
+                rollbackDataPath, _query, _mutation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // No read/parse/driver exception can bypass the deliberate fallback decision.
         }
 
-        return restored;
+        if (restored)
+        {
+            return new(true);
+        }
+
+        var fallback = false;
+        try
+        {
+            fallback = _mutation.ApplyExtendedFallback() && await GuardedDisplayActivationBackend.VerifyFallbackAsync(
+                _query, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException) { }
+
+        return new(false, fallback);
     }
 }

@@ -568,6 +568,13 @@ public sealed class DisplayActivationInteropTests
                 SerializerOptions) ?? throw new InvalidDataException();
             using var readyEvent = EventWaitHandle.OpenExisting(payload.ReadyEventName);
             readyEvent.Set();
+            _ = Task.Run(() =>
+            {
+                using var completed = EventWaitHandle.OpenExisting(payload.SuccessEventName);
+                Assert.True(completed.WaitOne(TimeSpan.FromSeconds(5)));
+                using var acknowledged = EventWaitHandle.OpenExisting(payload.AcknowledgedEventName);
+                acknowledged.Set();
+            });
             return Process.GetCurrentProcess();
         }
     }

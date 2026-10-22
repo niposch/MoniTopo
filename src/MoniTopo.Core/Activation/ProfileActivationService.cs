@@ -1,6 +1,7 @@
 using MoniTopo.Core.Identity;
 using MoniTopo.Core.Matching;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Recovery;
 using MoniTopo.Core.Validation;
 
 namespace MoniTopo.Core.Activation;
@@ -70,6 +71,8 @@ public class ActivationFailureException : Exception
 
 public interface IDisplayActivationBackend
 {
+    void SetMutationGuard(Action? ensureWriterOwnership) { }
+
     Task<CapturedDisplaySnapshot> QueryCurrentAsync(CancellationToken cancellationToken);
 
     Task<ActivationRollbackSnapshot> CaptureRollbackSnapshotAsync(CancellationToken cancellationToken);
@@ -112,10 +115,33 @@ public interface IDisplayActivationBackend
 
 public interface IRecoverySession : IAsyncDisposable
 {
+    bool IsTerminalPublished => false;
+    Task EnsureOwnershipAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     Task SignalSuccessAsync(CancellationToken cancellationToken);
 
     Task SignalFailureHandledAsync(bool rollbackSucceeded, CancellationToken cancellationToken);
+
+    async Task<RecoveryResult?> CompleteAsync(RecoveryTerminalOutcome outcome, CancellationToken cancellationToken)
+    {
+        if (outcome == RecoveryTerminalOutcome.ActivationSucceeded)
+        {
+            await SignalSuccessAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await SignalFailureHandledAsync(outcome == RecoveryTerminalOutcome.RollbackRestored, cancellationToken).ConfigureAwait(false);
+        }
+
+        return null;
+    }
 }
+
+public sealed class RecoveryOwnershipLostException() : ActivationFailureException(
+    "activation.recovery.takeover", "The display recovery companion took over this activation.");
+
+public sealed class TransientDisplayReadException(string message, Exception? innerException = null)
+    : Exception(message, innerException);
 
 public interface IRecoveryCoordinator
 {
@@ -132,9 +158,13 @@ public sealed class ProfileActivationService(
     IRecoveryCoordinator recoveryCoordinator,
     IActivationStateStore stateStore,
     MonitorIdentityResolver identityResolver,
-    ActiveProfileMatcher profileMatcher) : IDisposable
+    ActiveProfileMatcher profileMatcher,
+    TimeProvider? timeProvider = null,
+    TimeSpan? verificationTimeout = null) : IDisposable
 {
     private readonly SemaphoreSlim _activationGate = new(1, 1);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly TimeSpan _verificationTimeout = verificationTimeout ?? TimeSpan.FromSeconds(8);
 
     public async Task<ActivationResult> ActivateAsync(
         DisplayProfile profile,
@@ -176,13 +206,17 @@ public sealed class ProfileActivationService(
             Report(progress, ActivationPhase.Validating, "Asking Windows to validate the complete display setup…");
             await backend.ValidateCoreConfigurationAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
             recoverySession = await recoveryCoordinator.StartAsync(rollbackSnapshot, cancellationToken).ConfigureAwait(false);
+            backend.SetMutationGuard(() => recoverySession.EnsureOwnershipAsync(CancellationToken.None).GetAwaiter().GetResult());
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.ApplyingTopology, "Applying display topology and modes…");
             mutationBegan = true;
             await backend.ApplyCoreTemporaryAsync(profile, resolution.Bindings, cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.WaitingForDisplays, "Waiting for displays to settle…");
             await backend.WaitForStableTopologyAsync(cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
             var afterTopology = await backend.QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
             var rebound = identityResolver.Resolve(profile, afterTopology.ConnectedDisplays);
             if (rebound.Status != IdentityResolutionStatus.Success)
@@ -194,18 +228,22 @@ public sealed class ProfileActivationService(
 
             Report(progress, ActivationPhase.ApplyingScaling, "Applying Windows display scaling…");
             await backend.ApplyScalingAsync(profile, rebound.Bindings, cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.ApplyingHdr, "Applying HDR state…");
             await backend.ApplyHdrAsync(profile, rebound.Bindings, cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.Verifying, "Verifying the complete display setup…");
             await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.Persisting, "Saving the verified topology in Windows…");
             await backend.PersistCoreConfigurationAsync(cancellationToken).ConfigureAwait(false);
+            await recoverySession.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
             await VerifyAsync(profile, cancellationToken).ConfigureAwait(false);
             await stateStore.SetLastActivatedProfileAsync(profile.Id, cancellationToken).ConfigureAwait(false);
-            await recoverySession.SignalSuccessAsync(cancellationToken).ConfigureAwait(false);
+            await recoverySession.CompleteAsync(RecoveryTerminalOutcome.ActivationSucceeded, cancellationToken).ConfigureAwait(false);
 
             Report(progress, ActivationPhase.Completed, $"{profile.Name} activated");
             return new ActivationResult(
@@ -224,28 +262,60 @@ public sealed class ProfileActivationService(
                 "MoniTopo could not activate the display profile.",
                 exception,
                 exception.Data["MoniTopo.TechnicalDetails"] as string ?? exception.ToString());
-            if (mutationBegan && rollbackSnapshot is not null)
+            if (mutationBegan && rollbackSnapshot is not null && recoverySession?.IsTerminalPublished != true)
             {
                 rollbackAttempted = true;
                 Report(progress, ActivationPhase.RollingBack, "Restoring the previous display setup…");
                 try
                 {
+                    if (recoverySession is not null)
+                    {
+                        await recoverySession.EnsureOwnershipAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+
                     rollbackSucceeded = await backend.RollbackAsync(rollbackSnapshot, CancellationToken.None).ConfigureAwait(false);
+                    if (recoverySession is not null)
+                    {
+                        await recoverySession.EnsureOwnershipAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+
                     if (!rollbackSucceeded)
                     {
                         fallbackUsed = await backend.EmergencyFallbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
                 }
+                catch (RecoveryOwnershipLostException)
+                {
+                    // The watchdog is waiting for the main writer lease. Do not issue any more
+                    // writes; CompleteAsync releases it and waits for the recovery outcome.
+                }
                 catch
                 {
-                    fallbackUsed = await TryEmergencyFallbackAsync().ConfigureAwait(false);
+                    try
+                    {
+                        if (recoverySession is not null)
+                        {
+                            await recoverySession.EnsureOwnershipAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
+
+                        fallbackUsed = await TryEmergencyFallbackAsync().ConfigureAwait(false);
+                    }
+                    catch (RecoveryOwnershipLostException) { }
                 }
 
                 if (recoverySession is not null)
                 {
                     try
                     {
-                        await recoverySession.SignalFailureHandledAsync(rollbackSucceeded, CancellationToken.None).ConfigureAwait(false);
+                        var recovered = await recoverySession.CompleteAsync(
+                            rollbackSucceeded ? RecoveryTerminalOutcome.RollbackRestored :
+                            fallbackUsed ? RecoveryTerminalOutcome.EmergencyFallback : RecoveryTerminalOutcome.Unresolved,
+                            CancellationToken.None).ConfigureAwait(false);
+                        if (recovered is not null)
+                        {
+                            rollbackSucceeded = recovered.RollbackSucceeded;
+                            fallbackUsed = recovered.EmergencyFallbackUsed;
+                        }
                     }
                     catch
                     {
@@ -253,14 +323,22 @@ public sealed class ProfileActivationService(
                     }
                 }
             }
-            else if (rollbackSnapshot is not null)
+            else if (!mutationBegan && rollbackSnapshot is not null)
             {
-                await backend.DiscardRollbackSnapshotAsync(rollbackSnapshot, CancellationToken.None).ConfigureAwait(false);
+                if (recoverySession is not null)
+                {
+                    await recoverySession.CompleteAsync(RecoveryTerminalOutcome.AbortedBeforeMutation, CancellationToken.None).ConfigureAwait(false);
+                }
+                else if (exception.Data["MoniTopo.PreserveRecovery"] is not true)
+                {
+                    await backend.DiscardRollbackSnapshotAsync(rollbackSnapshot, CancellationToken.None).ConfigureAwait(false);
+                }
             }
 
             var message = rollbackAttempted && rollbackSucceeded
                 ? $"MoniTopo restored the previous display setup. {failure.Message}"
-                : failure.Message;
+                : fallbackUsed ? $"Windows enabled a fallback display setup. {failure.Message}" :
+                    rollbackAttempted ? $"{failure.Message} Recovery could not verify a usable setup. Open Windows Display Settings." : failure.Message;
             return new ActivationResult(
                 ActivationOutcome.Failed,
                 message,
@@ -273,6 +351,19 @@ public sealed class ProfileActivationService(
         }
         finally
         {
+            if (!mutationBegan && recoverySession is not null && !recoverySession.IsTerminalPublished)
+            {
+                try
+                {
+                    await recoverySession.CompleteAsync(RecoveryTerminalOutcome.AbortedBeforeMutation, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Preserve the payload if companion acknowledgement was unavailable.
+                }
+            }
+
+            backend.SetMutationGuard(null);
             if (recoverySession is not null)
             {
                 try
@@ -291,13 +382,37 @@ public sealed class ProfileActivationService(
 
     private async Task VerifyAsync(DisplayProfile profile, CancellationToken cancellationToken)
     {
-        var current = await backend.QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
-        if (!profileMatcher.Match(profile, current).IsMatch)
+        var started = _timeProvider.GetTimestamp();
+        var matched = false;
+        while (_timeProvider.GetElapsedTime(started) < _verificationTimeout)
         {
-            throw new ActivationFailureException(
-                "activation.verification.failed",
-                "Windows did not apply every saved display setting.");
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var current = await backend.QueryCurrentAsync(cancellationToken).ConfigureAwait(false);
+                if (profileMatcher.Match(profile, current).IsMatch)
+                {
+                    if (matched)
+                    {
+                        return;
+                    }
+
+                    matched = true;
+                }
+                else
+                {
+                    matched = false;
+                }
+            }
+            catch (TransientDisplayReadException)
+            {
+                matched = false;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), _timeProvider, cancellationToken).ConfigureAwait(false);
         }
+
+        throw new ActivationFailureException("activation.verification.failed", "Windows did not apply every saved display setting.");
     }
 
     private async Task<bool> TryEmergencyFallbackAsync()

@@ -8,7 +8,7 @@
       "monitopo.windows": {
         "type": "Project",
         "dependencies": {
-          "MoniTopo.Core": "[1.0.0, )"
+          "MoniTopo.Core": "[2026.808.0, )"
         }
       }
     },
