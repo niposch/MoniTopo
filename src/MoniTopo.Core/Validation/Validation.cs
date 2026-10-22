@@ -113,6 +113,9 @@ public static class ConfigurationValidator
             errors.Add(new ValidationError("configuration.schema", "The configuration schema is not supported."));
         }
 
+        if (!Enum.IsDefined(configuration.ApplicationSettings.ThemePreference))
+            errors.Add(new ValidationError("settings.theme.invalid", "The selected application theme is not supported."));
+
         foreach (var profile in configuration.Profiles)
         {
             errors.AddRange(ProfileValidator.Validate(profile));
@@ -147,7 +150,6 @@ public static class ConfigurationValidator
         foreach (var (owner, binding) in hotkeys)
         {
             if (binding.VirtualKey is < 1 or > 0xFE ||
-                binding.Modifiers == HotkeyModifiers.None ||
                 (binding.Modifiers & ~KnownModifiers) != 0)
             {
                 errors.Add(new ValidationError("hotkey.invalid", $"The hotkey for {owner} is invalid."));

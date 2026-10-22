@@ -9,6 +9,10 @@
 - Restore hotkeys on their owning UI thread, refresh visible tray state, bound stalled launch messages, and drain work before exit.
 - Recover from invalid saved window sizes and avoid saving zero bounds when exiting without opening the main window.
 - Preserve staged updates and retry actions, check daily during long-running sessions, and improve keyboard and secondary-monitor popup behavior.
+- Allow single-key global hotkeys after confirmation, and show assigned shortcuts in the main profile list and tray.
+- Replace generic tray glyphs with saved-layout schematics and legible theme-aware tiles; anchor the popup beside the primary monitor's notification area independently of the pointer.
+- Add System/Light/Dark theme selection, share the tray icon with the application, and move profile editing actions above the preview.
+- Show complete release notes from the tray or Settings before downloading an update.
 
 ## 22.07.26 release candidate
 

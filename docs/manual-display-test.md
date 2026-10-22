@@ -39,12 +39,17 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - Launch a second MoniTopo instance and confirm the existing instance opens its Profiles page.
 - Close the main window and confirm MoniTopo remains in the tray; use Exit MoniTopo and confirm it terminates.
 - Test the popup with bottom, top, left, and right taskbar positions where Windows permits them.
-- Test popup placement and keyboard operation on each monitor in a mixed-DPI setup; confirm it remains inside the work area.
+- Move the pointer between monitors and open the popup both by clicking the icon and by its configured hotkey. It must stay beside the primary monitor's notification area, within its work area, regardless of pointer location. Repeat after changing the primary monitor and at mixed DPI.
 - Enable run at login, sign out/in, and confirm background startup does not open the main window. Disable it and repeat.
 - Enable the show-window preference and compare an ordinary launch with a `--background` launch. Only the ordinary launch should honor that preference.
 - Reorder profiles in the main window and confirm the popup uses the same order.
 - Tab to the popup's Open MoniTopo and update buttons and press Enter. Each must invoke its own action without activating a profile.
 - Confirm the main window can be restored on a secondary monitor and the popup remains usable after changing the primary monitor or DPI.
+- In Settings, change **Open tray popup** from Ctrl+Alt+M and confirm it toggles the popup with a profile selected; arrows and Enter must still work.
+- Choose an unmodified key: verify the system-wide interception warning, cancel it once, then confirm it. Check conflict rejection, no repeat while held, and removal/restoration of the previous shortcut. Use a non-typing key such as F8 for this test.
+- Confirm profile hotkeys appear in both lists, tray schematics reflect distinct saved layouts, and the main window/taskbar use the tray icon.
+- Select System, Light, and Dark in Settings. Both open windows, dialogs, selected tiles, and release notes must remain legible immediately and after restarting; System must follow Windows.
+- Confirm profile update/hotkey/binding actions appear above the monitor preview, not below the display details.
 
 ## Recovery
 
@@ -58,6 +63,7 @@ Local validation on 22 October 2026 completed two round trips between the existi
 - Install per-user without administrator rights; record the expected unsigned SmartScreen warning.
 - Confirm Start Menu launch, first-run autostart choice, repair/reinstall behavior, and uninstall cleanup including the startup entry.
 - Check for an update against a draft test release. Confirm checks do not download automatically, clicking the popup update hint starts the download, and the staged update is applied by either **Restart now** or the next application launch.
+- Before downloading, open **Release notes** from both the tray and Settings. Confirm the available version, complete scrollable notes, selectable text, and no download or restart. If the feed omits notes, check the explicit unavailable message. Notes must remain accessible while downloading and after staging.
 - After a download, run Check for updates again; Restart now must remain available for the staged update. Leave an installed copy running across a daily interval and confirm automatic checks continue without restarting the app.
 - Confirm the installed and portable builds display the expected date-formatted version.
 

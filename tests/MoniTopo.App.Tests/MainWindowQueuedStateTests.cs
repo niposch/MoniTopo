@@ -11,6 +11,23 @@ namespace MoniTopo.App.Tests;
 public sealed class MainWindowQueuedStateTests
 {
     [Fact]
+    public async Task NotesAreAvailableBeforeDownloadAndRemainAvailableAfterStaging()
+    {
+        using var session = new ConfigurationSession(new MemoryStore(), ApplicationConfiguration.CreateDefault());
+        using var updates = new UpdateCoordinator(new FakeUpdateClient(), session);
+        using var viewModel = new MainWindowViewModel(session, updates);
+        Assert.False(viewModel.CanViewReleaseNotes);
+        await updates.CheckNowAsync();
+        Assert.True(viewModel.CanViewReleaseNotes);
+        Assert.Equal("# Fixes\n- Synthetic notes", viewModel.AvailableUpdate?.ReleaseNotes);
+        Assert.True(viewModel.CanDownloadUpdate);
+        Assert.False(viewModel.CanInstallUpdate);
+        await updates.DownloadAsync();
+        Assert.True(viewModel.CanViewReleaseNotes);
+        Assert.Equal("# Fixes\n- Synthetic notes", viewModel.AvailableUpdate?.ReleaseNotes);
+    }
+
+    [Fact]
     public async Task QueuedCallbacksReadLatestConfigurationAndUpdateStateEvenWhenDeliveredOutOfOrder()
     {
         var profile = Profile();
@@ -86,7 +103,7 @@ public sealed class MainWindowQueuedStateTests
         public string? CurrentPackageVersion => "2026.808.0";
         public AvailableUpdate? PendingRestart { get; private set; }
         public Task<AvailableUpdate?> CheckAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<AvailableUpdate?>(new AvailableUpdate("2026.1022.0", "22.10.26", null));
+            Task.FromResult<AvailableUpdate?>(new AvailableUpdate("2026.1022.0", "22.10.26", "# Fixes\n- Synthetic notes"));
         public Task DownloadAsync(AvailableUpdate update, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
         {
             PendingRestart = update;

@@ -6,6 +6,14 @@ namespace MoniTopo.Windows.Tests;
 public sealed class GlobalHotkeyServiceTests
 {
     [Fact]
+    public void UnmodifiedKeyIsRegisteredWithoutModifiersButWithNoRepeat()
+    {
+        var native = new FakeHotkeyNative();
+        using var service = new GlobalHotkeyService((nint)42, native);
+        Assert.True(service.RegisterProfile(Guid.NewGuid(), new HotkeyBinding(HotkeyModifiers.None, 0x77)).Succeeded);
+        Assert.Equal(0x4000u, Assert.Single(native.RegisterCalls).Modifiers);
+    }
+    [Fact]
     public void RegistersNoRepeatAndRoutesWindowMessage()
     {
         var native = new FakeHotkeyNative();

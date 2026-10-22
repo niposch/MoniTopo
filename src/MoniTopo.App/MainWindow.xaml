@@ -1,6 +1,8 @@
 <Window x:Class="MoniTopo.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:interaction="clr-namespace:MoniTopo.App.Interaction"
+        xmlns:configuration="clr-namespace:MoniTopo.Core.Configuration;assembly=MoniTopo.Core"
         Title="MoniTopo"
         Height="620"
         Width="980"
@@ -8,6 +10,9 @@
         MinWidth="680"
         SizeChanged="OnWindowSizeChanged"
         Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+    <Window.Resources>
+        <interaction:HotkeyTextConverter x:Key="HotkeyText" />
+    </Window.Resources>
     <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -62,9 +67,23 @@
                             </Grid.RowDefinitions>
                             <ListBox ItemsSource="{Binding Profiles}"
                                      SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                                     DisplayMemberPath="Name"
                                      MinHeight="60"
-                                     AutomationProperties.Name="Saved display profiles" />
+                                     HorizontalContentAlignment="Stretch"
+                                     AutomationProperties.Name="Saved display profiles">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{Binding DirectHotkey, Mode=OneWay, Converter={StaticResource HotkeyText}}"
+                                                       Margin="10,0,0,0" FontSize="11" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                             <WrapPanel Grid.Row="1" Margin="0,8,0,0">
                                 <Button Content="↑" Width="34" Margin="0,0,6,6" Click="OnMoveUpClick" AutomationProperties.Name="Move profile up" />
                                 <Button Content="↓" Width="34" Margin="0,0,6,6" Click="OnMoveDownClick" AutomationProperties.Name="Move profile down" />
@@ -87,6 +106,11 @@
                                                VerticalAlignment="Center" />
                                 </DockPanel>
                                 <TextBlock Text="{Binding SelectedProfileSummary}" Margin="0,0,0,10" Opacity="0.72" />
+                                <WrapPanel x:Name="ProfileActions" Margin="0,0,0,4">
+                                    <Button Content="Update from current setup" Margin="0,0,8,8" Click="OnUpdateClick" IsEnabled="{Binding HasSelection}" />
+                                    <Button Content="Assign hotkey" Margin="0,0,8,8" Click="OnHotkeyClick" IsEnabled="{Binding HasSelection}" />
+                                    <Button Content="Resolve display binding" Margin="0,0,8,8" Click="OnResolveBindingClick" IsEnabled="{Binding HasSelection}" />
+                                </WrapPanel>
 
                                 <Border x:Name="PreviewHost"
                                         Height="280"
@@ -168,11 +192,6 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
 
-                                <WrapPanel Margin="0,8,0,4">
-                                    <Button Content="Update from current setup" Margin="0,0,8,8" Click="OnUpdateClick" IsEnabled="{Binding HasSelection}" />
-                                    <Button Content="Assign hotkey" Margin="0,0,8,8" Click="OnHotkeyClick" IsEnabled="{Binding HasSelection}" />
-                                    <Button Content="Resolve display binding" Margin="0,0,8,8" Click="OnResolveBindingClick" IsEnabled="{Binding HasSelection}" />
-                                </WrapPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
@@ -183,6 +202,16 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="4,16,16,12" MaxWidth="680" HorizontalAlignment="Left">
                         <TextBlock Text="General" FontSize="18" FontWeight="SemiBold" />
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <TextBlock Text="Theme" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <ComboBox x:Name="ThemeSelector" MinWidth="150" SelectedValuePath="Tag"
+                                      SelectedValue="{Binding ThemePreference, Mode=OneWay}"
+                                      SelectionChanged="OnThemeSelectionChanged" AutomationProperties.Name="Application theme">
+                                <ComboBoxItem Content="System" Tag="{x:Static configuration:ThemePreference.System}" />
+                                <ComboBoxItem Content="Light" Tag="{x:Static configuration:ThemePreference.Light}" />
+                                <ComboBoxItem Content="Dark" Tag="{x:Static configuration:ThemePreference.Dark}" />
+                            </ComboBox>
+                        </StackPanel>
                         <CheckBox Content="Run MoniTopo when I sign in"
                                   IsChecked="{Binding RunAtLogin, Mode=OneWay}"
                                   Click="OnRunAtLoginClick"
@@ -192,10 +221,11 @@
                                   Click="OnShowWindowOnLaunchClick"
                                   Margin="0,8,0,0" />
                         <Button HorizontalAlignment="Left"
+                                AutomationProperties.Name="Change hotkey to open tray popup"
                                 Click="OnPopupHotkeyClick"
                                 Margin="0,10,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Popup hotkey: " />
+                                <TextBlock Text="Open tray popup: " />
                                 <TextBlock Text="{Binding PopupHotkeyText, Mode=OneWay}" />
                             </StackPanel>
                         </Button>
@@ -229,11 +259,9 @@
                                    Margin="0,7,0,0"
                                    TextWrapping="Wrap"
                                    Opacity="0.76" />
-                        <TextBlock Text="{Binding UpdateReleaseNotes}"
-                                   Margin="0,6,0,0"
-                                   TextWrapping="Wrap"
-                                   MaxHeight="90"
-                                   TextTrimming="CharacterEllipsis" />
+                        <Button Content="Release notes" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                IsEnabled="{Binding CanViewReleaseNotes, Mode=OneWay}"
+                                Click="OnReleaseNotesClick" AutomationProperties.Name="View release notes" />
 
                         <Separator Margin="0,18,0,16" />
                         <TextBlock Text="About" FontSize="18" FontWeight="SemiBold" />

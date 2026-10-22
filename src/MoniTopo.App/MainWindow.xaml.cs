@@ -35,6 +35,7 @@ public partial class MainWindow : Window, IDisposable
     public MainWindow()
     {
         InitializeComponent();
+        Icon = MoniTopo.App.Tray.ApplicationIcon.WindowIcon;
     }
 
     public void Initialize(
@@ -66,6 +67,14 @@ public partial class MainWindow : Window, IDisposable
     public void ShowProfilesPage() => MainNavigation.SelectedIndex = 0;
 
     public void ShowSettingsPage() => MainNavigation.SelectedIndex = 1;
+
+    private void OnReleaseNotesClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel?.AvailableUpdate is { } update)
+        {
+            new ReleaseNotesDialog(update) { Owner = this }.ShowDialog();
+        }
+    }
 
     public void ReportStatus(string message)
     {
@@ -278,14 +287,10 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var dialog = new HotkeyCaptureDialog(profile.DirectHotkey) { Owner = this };
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
         await RunActionAsync(async () =>
         {
+            var dialog = new HotkeyCaptureDialog(profile.DirectHotkey) { Owner = this };
+            if (dialog.ShowDialog() != true) return string.Empty;
             _ = _profiles!.ValidateHotkey(profile.Id, dialog.SelectedBinding);
             var registration = _registerHotkey!(profile.Id, dialog.SelectedBinding);
             if (!registration.Succeeded)
@@ -344,6 +349,19 @@ public partial class MainWindow : Window, IDisposable
         checkBox.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, _viewModel.RunAtLogin);
     }
 
+    private async void OnThemeSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_viewModel is null || _startupSettings is null || sender is not System.Windows.Controls.ComboBox combo ||
+            combo.SelectedValue is not ThemePreference requested || requested == _viewModel.ThemePreference) return;
+
+        await RunActionAsync(async () =>
+        {
+            await _startupSettings.SetThemePreferenceAsync(requested).ConfigureAwait(true);
+            return $"Theme: {requested}";
+        });
+        combo.SetCurrentValue(System.Windows.Controls.Primitives.Selector.SelectedValueProperty, _viewModel.ThemePreference);
+    }
+
     private async void OnShowWindowOnLaunchClick(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.CheckBox checkBox || _viewModel is null)
@@ -389,15 +407,11 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        var current = _configuration!.Current.ApplicationSettings.PopupHotkey;
-        var dialog = new HotkeyCaptureDialog(current, "Popup hotkey", allowRemove: false) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.SelectedBinding is not { } binding)
-        {
-            return;
-        }
-
         await RunActionAsync(async () =>
         {
+            var current = _configuration!.Current.ApplicationSettings.PopupHotkey;
+            var dialog = new HotkeyCaptureDialog(current, "Open tray popup hotkey", allowRemove: false) { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.SelectedBinding is not { } binding) return string.Empty;
             await _popupHotkeySettings!.SetAsync(binding).ConfigureAwait(true);
             return $"Popup hotkey changed to {HotkeyDisplayText.Format(binding)}.";
         });

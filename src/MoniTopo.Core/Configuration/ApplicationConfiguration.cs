@@ -4,6 +4,8 @@ namespace MoniTopo.Core.Configuration;
 
 public readonly record struct WindowBounds(double Left, double Top, double Width, double Height);
 
+public enum ThemePreference { System, Light, Dark }
+
 public sealed record ApplicationSettings(
     bool RunAtLogin,
     HotkeyBinding PopupHotkey,
@@ -12,6 +14,8 @@ public sealed record ApplicationSettings(
     bool FirstRunCompleted,
     bool ShowMainWindowOnLaunch)
 {
+    public ThemePreference ThemePreference { get; init; } = ThemePreference.System;
+
     public static ApplicationSettings Default { get; } = new(
         RunAtLogin: true,
         PopupHotkey: new HotkeyBinding(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x4D),

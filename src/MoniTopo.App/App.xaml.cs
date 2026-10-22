@@ -119,6 +119,7 @@ public partial class App : System.Windows.Application, IDisposable
             }
         }
 
+        ApplicationTheme.Apply(this, _configuration.Current.ApplicationSettings.ThemePreference);
         var startupExecutable = StartupExecutable.Current();
         _configuration.NotificationFailed += (_, exception) => _diagnosticLog.Write("ConfigurationNotification", exception);
         var runAtLogin = new RunAtLoginService(
@@ -154,6 +155,12 @@ public partial class App : System.Windows.Application, IDisposable
         _popupWindow = new PopupWindow(buildIdentity.DisplayVersion);
         _popupWindow.MainWindowRequested += (_, _) => OpenMainWindow();
         _popupWindow.UpdateActionRequested += OnPopupUpdateActionRequested;
+        _popupWindow.ReleaseNotesRequested += (_, update) =>
+        {
+            var notes = new MoniTopo.App.Dialogs.ReleaseNotesDialog(update);
+            if (_mainWindow?.IsVisible == true) notes.Owner = _mainWindow;
+            notes.ShowDialog();
+        };
         _popupWindow.ActivateProfileRequested += OnPopupActivateRequested;
         _tray = new TrayIconService();
         _tray.TogglePopupRequested += (_, _) => TogglePopup();
@@ -209,6 +216,7 @@ public partial class App : System.Windows.Application, IDisposable
         });
         _configuration.Changed += (_, _) => Dispatcher.BeginInvoke(() =>
         {
+            ApplicationTheme.Apply(this, _configuration.Current.ApplicationSettings.ThemePreference);
             RefreshVisiblePopup();
             if (_displayRefresh is not null)
             {
@@ -424,6 +432,7 @@ public partial class App : System.Windows.Application, IDisposable
         if (_popupWindow?.IsVisible == true && _configuration is not null)
         {
             _popupWindow.ViewModel.RefreshProfiles(OrderedProfiles(), _activeDisplayState?.Current.ProfileId);
+            _popupWindow.RefreshPlacement();
         }
     }
 

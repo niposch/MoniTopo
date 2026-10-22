@@ -94,6 +94,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public bool ShowMainWindowOnLaunch => _configuration.Current.ApplicationSettings.ShowMainWindowOnLaunch;
 
+    public ThemePreference ThemePreference => _configuration.Current.ApplicationSettings.ThemePreference;
+
     public string PopupHotkeyText => HotkeyDisplayText.Format(_configuration.Current.ApplicationSettings.PopupHotkey);
 
     public string CurrentVersionText =>
@@ -101,7 +103,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public string UpdateStatusMessage => _updateState.Message;
 
-    public string? UpdateReleaseNotes => _updateState.Update?.ReleaseNotes;
+    public AvailableUpdate? AvailableUpdate => _updateState.Update;
+
+    public bool CanViewReleaseNotes => AvailableUpdate is not null;
 
     public int UpdateProgressPercent => _updateState.ProgressPercent;
 
@@ -147,7 +151,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _updateState = state;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateStatusMessage)));
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateReleaseNotes)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvailableUpdate)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanViewReleaseNotes)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateProgressPercent)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanCheckForUpdates)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanDownloadUpdate)));
@@ -171,6 +176,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RunAtLogin)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateChecksEnabled)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowMainWindowOnLaunch)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ThemePreference)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PopupHotkeyText)));
     }
 

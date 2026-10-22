@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using MoniTopo.Core.Models;
+using MoniTopo.Core.Updates;
 using MoniTopo.Windows.Shell;
 using Forms = System.Windows.Forms;
 
@@ -11,6 +12,7 @@ namespace MoniTopo.App.Popup;
 
 public partial class PopupWindow : Window
 {
+    private bool _closed;
     public PopupWindow(string versionText = "Development build")
     {
         InitializeComponent();
@@ -26,6 +28,8 @@ public partial class PopupWindow : Window
     public event EventHandler? MainWindowRequested;
 
     public event EventHandler? UpdateActionRequested;
+
+    public event EventHandler<AvailableUpdate>? ReleaseNotesRequested;
 
     public void ShowProfiles(IReadOnlyList<DisplayProfile> profiles, Guid? activeProfileId)
     {
@@ -51,6 +55,13 @@ public partial class PopupWindow : Window
         {
             ShowProfiles(profiles, activeProfileId);
         }
+    }
+
+    public void RefreshPlacement()
+    {
+        if (_closed || !IsVisible) return;
+        PreparePlacement();
+        PlaceNearNotificationArea();
     }
 
     private void OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -113,6 +124,14 @@ public partial class PopupWindow : Window
     private void OnUpdateClick(object sender, RoutedEventArgs e) =>
         UpdateActionRequested?.Invoke(this, EventArgs.Empty);
 
+    private void OnReleaseNotesClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.CanViewReleaseNotes || ViewModel.AvailableUpdate is not { } update) return;
+        // Hide before opening a modal window; deactivation normally dismisses this popup.
+        Hide();
+        ReleaseNotesRequested?.Invoke(this, update);
+    }
+
     private void OnDeactivated(object? sender, EventArgs e)
     {
         if (!ViewModel.IsBusy)
@@ -129,22 +148,30 @@ public partial class PopupWindow : Window
         }
     }
 
-    private void OnContentRendered(object? sender, EventArgs e) => PlaceNearNotificationArea();
+    private void OnContentRendered(object? sender, EventArgs e)
+    {
+        // WPF queues this callback; shutdown can close the window before it runs.
+        if (!_closed && IsVisible) PlaceNearNotificationArea();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        base.OnClosed(e);
+    }
 
     private Forms.Screen? _placementScreen;
     private PixelRect _anchor;
 
     private void PreparePlacement()
     {
-        var cursor = Forms.Cursor.Position;
-        var screen = Forms.Screen.FromPoint(cursor);
+        var screen = Forms.Screen.PrimaryScreen ?? Forms.Screen.AllScreens[0];
         _placementScreen = screen;
         var bounds = ToPixelRect(screen.Bounds);
         var workArea = ToPixelRect(screen.WorkingArea);
-        _anchor = screen.Bounds.Contains(cursor) && !screen.WorkingArea.Contains(cursor)
-            ? new PixelRect(cursor.X, cursor.Y, cursor.X + 1, cursor.Y + 1)
-            : TrayPopupPlacement.DefaultNotificationAnchor(bounds, workArea);
-        var scale = DesktopWindowPlacement.GetDpi(new PixelPoint(cursor.X, cursor.Y)) / 96d;
+        _anchor = TrayPopupPlacement.DefaultNotificationAnchor(bounds, workArea);
+        var center = new PixelPoint(workArea.Left + workArea.Width / 2, workArea.Top + workArea.Height / 2);
+        var scale = DesktopWindowPlacement.GetDpi(center) / 96d;
         MaxHeight = Math.Max(100, (workArea.Height - 16) / scale);
         Width = Math.Min(360, (workArea.Width - 16) / scale);
         // Move the HWND first so WPF measures using the destination monitor's DPI.

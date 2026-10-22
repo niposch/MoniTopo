@@ -14,9 +14,13 @@ Use the `MoniTopo-win-Setup.exe` asset from a release candidate, or extract the 
 
 On first run, choose whether MoniTopo should start when you sign in, then capture the setup currently configured in Windows as a named profile. Activate saved profiles from the tray popup or an assigned hotkey. MoniTopo starts in the tray by default; the main window can be enabled at launch in General settings.
 
+The tray popup shows each saved layout, name, and hotkey. It opens beside the primary monitor's notification area, independent of the pointer position. **Settings → Open tray popup** changes its global shortcut (default **Ctrl+Alt+M**). Single-key shortcuts are allowed after confirmation because they intercept that key in other applications. Profile hotkeys also appear in the main profile list.
+
+Choose **System**, **Light**, or **Dark** under **Settings → General → Theme**. The choice applies immediately to MoniTopo and is remembered; it does not change the Windows theme.
+
 During hardware acceptance, display activation requires the tester to launch MoniTopo with the explicit environment opt-in described in the [development notes](docs/development.md#safety-boundary). Starting the application alone only reads display state.
 
-Update checks run at most once per day when enabled. MoniTopo does not download an update until **Download update** is selected. A staged update can be applied immediately with **Restart now**, or automatically the next time MoniTopo starts.
+Update checks run at most once per day when enabled. Choose **Release notes** in the tray update row or **Settings → Updates** to read the available version's notes before deciding. Reading notes does not download anything. MoniTopo does not download an update until **Download update** is selected. A staged update can be applied immediately with **Restart now**, or automatically the next time MoniTopo starts.
 
 Current limitations include the runtime-probed Windows scale contract, ambiguous identical monitors requiring manual binding, unsigned packages, and hardware behavior that still needs the [manual display checklist](docs/manual-display-test.md).
 

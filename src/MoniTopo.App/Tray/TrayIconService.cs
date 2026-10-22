@@ -1,6 +1,5 @@
 using System.Drawing;
 using System.Windows.Forms;
-using MoniTopo.Windows.Shell;
 
 namespace MoniTopo.App.Tray;
 
@@ -18,7 +17,7 @@ public sealed class TrayIconService : IUserNotificationService, IDisposable
 
     public TrayIconService()
     {
-        _icon = TrayIconDrawing.Create();
+        _icon = ApplicationIcon.CreateTrayIcon();
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open MoniTopo", null, (_, _) => OpenMainWindowRequested?.Invoke(this, EventArgs.Empty));
         menu.Items.Add(new ToolStripSeparator());
@@ -73,32 +72,4 @@ public sealed class TrayIconService : IUserNotificationService, IDisposable
         }
     }
 
-    private static class TrayIconDrawing
-    {
-        internal static Icon Create()
-        {
-            using var bitmap = new Bitmap(32, 32);
-            using (var graphics = Graphics.FromImage(bitmap))
-            using (var pen = new Pen(Color.White, 2.5f))
-            {
-                graphics.Clear(Color.Transparent);
-                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                graphics.DrawRoundedRectangle(pen, new Rectangle(2, 5, 18, 13), new Size(2, 2));
-                graphics.DrawLine(pen, 8, 21, 14, 21);
-                graphics.DrawLine(pen, 11, 18, 11, 21);
-                graphics.DrawRoundedRectangle(pen, new Rectangle(14, 14, 16, 12), new Size(2, 2));
-            }
-
-            var handle = bitmap.GetHicon();
-            try
-            {
-                using var borrowed = Icon.FromHandle(handle);
-                return (Icon)borrowed.Clone();
-            }
-            finally
-            {
-                NativeIconHandle.Destroy(handle);
-            }
-        }
-    }
 }

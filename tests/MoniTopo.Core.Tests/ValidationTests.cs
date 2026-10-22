@@ -6,6 +6,20 @@ namespace MoniTopo.Core.Tests;
 
 public sealed class ValidationTests
 {
+    [Fact]
+    public void UnmodifiedPopupAndProfileHotkeysAreAllowedButStillConflictChecked()
+    {
+        var binding = new HotkeyBinding(HotkeyModifiers.None, 0x77);
+        var profile = TestData.Profile(hotkey: binding);
+        Assert.Empty(ConfigurationValidator.Validate(TestData.Configuration(profile)));
+        var config = TestData.Configuration(profile) with
+        {
+            ApplicationSettings = ApplicationSettings.Default with { PopupHotkey = binding },
+        };
+        var errors = ConfigurationValidator.Validate(config);
+        Assert.Contains(errors, error => error.Code == "hotkey.conflict");
+        Assert.DoesNotContain(errors, error => error.Code == "hotkey.invalid");
+    }
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

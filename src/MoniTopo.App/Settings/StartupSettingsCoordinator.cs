@@ -11,6 +11,12 @@ public sealed class StartupSettingsCoordinator(
     private int _disposed;
     public IRunAtLoginService RunAtLogin => runAtLogin;
 
+    public Task SetThemePreferenceAsync(MoniTopo.Core.Configuration.ThemePreference theme, CancellationToken cancellationToken = default) =>
+        configuration.UpdateAsync(current => current with
+        {
+            ApplicationSettings = current.ApplicationSettings with { ThemePreference = theme },
+        }, cancellationToken);
+
     public async Task CompleteFirstRunAsync(bool enabled, CancellationToken cancellationToken = default) =>
         await SetAsync(enabled, firstRunCompleted: true, cancellationToken).ConfigureAwait(false);
 

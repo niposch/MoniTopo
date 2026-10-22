@@ -8,6 +8,27 @@ namespace MoniTopo.App.Tests;
 
 public sealed class StartupSettingsCoordinatorTests
 {
+    [Theory]
+    [InlineData(ThemePreference.System, "System")]
+    [InlineData(ThemePreference.Light, "Light")]
+    [InlineData(ThemePreference.Dark, "Dark")]
+    public async Task ThemeChoicePersistsAndMapsToNativeWpfMode(ThemePreference theme, string expected)
+    {
+        using var session = new ConfigurationSession(new MemoryStore(), ApplicationConfiguration.CreateDefault());
+        using var coordinator = new StartupSettingsCoordinator(session, new FakeRunAtLogin());
+        await coordinator.SetThemePreferenceAsync(theme);
+        Assert.Equal(theme, session.Current.ApplicationSettings.ThemePreference);
+        Assert.Equal(expected, ApplicationTheme.ToThemeMode(theme).ToString());
+    }
+
+    [Fact]
+    public async Task FailedThemeSaveRetainsPreviousChoice()
+    {
+        using var session = new ConfigurationSession(new MemoryStore { Failure = new IOException("Synthetic failure") }, ApplicationConfiguration.CreateDefault());
+        using var coordinator = new StartupSettingsCoordinator(session, new FakeRunAtLogin());
+        await Assert.ThrowsAsync<IOException>(() => coordinator.SetThemePreferenceAsync(ThemePreference.Dark));
+        Assert.Equal(ThemePreference.System, session.Current.ApplicationSettings.ThemePreference);
+    }
     [Fact]
     public async Task FirstRunPersistsChoiceAndCompletion()
     {

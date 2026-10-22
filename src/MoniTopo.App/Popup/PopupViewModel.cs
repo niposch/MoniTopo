@@ -15,6 +15,8 @@ public sealed record PopupProfileItem(
     bool IsActive)
 {
     public string DisplayCountText => $"{ActiveDisplayCount} display{(ActiveDisplayCount == 1 ? string.Empty : "s")}";
+    public IReadOnlyList<SchematicMonitor> Monitors { get; init; } = [];
+    public string AccessibleName => $"{Name}{(string.IsNullOrEmpty(HotkeyText) ? string.Empty : $", {HotkeyText}")}{(IsActive ? ", active" : string.Empty)}";
 }
 
 public sealed class PopupViewModel : INotifyPropertyChanged
@@ -60,6 +62,10 @@ public sealed class PopupViewModel : INotifyPropertyChanged
 
     public string VersionText { get; }
 
+    public AvailableUpdate? AvailableUpdate => _updateState.Update;
+
+    public bool CanViewReleaseNotes => !IsBusy && AvailableUpdate is not null;
+
     public bool ShowUpdateAction => _updateState.Status is
         UpdateStatus.Available or UpdateStatus.Downloading or UpdateStatus.ReadyToInstall;
 
@@ -67,9 +73,9 @@ public sealed class PopupViewModel : INotifyPropertyChanged
 
     public string UpdateActionText => _updateState.Status switch
     {
-        UpdateStatus.Available => $"Version {_updateState.Update?.DisplayVersion} available — Download update",
-        UpdateStatus.Downloading => $"Downloading version {_updateState.Update?.DisplayVersion}… {_updateState.ProgressPercent}%",
-        UpdateStatus.ReadyToInstall => $"Version {_updateState.Update?.DisplayVersion} ready — Restart now",
+        UpdateStatus.Available => $"Download update · {_updateState.Update?.DisplayVersion}",
+        UpdateStatus.Downloading => $"Downloading… {_updateState.ProgressPercent}%",
+        UpdateStatus.ReadyToInstall => $"Restart now · {_updateState.Update?.DisplayVersion}",
         _ => string.Empty,
     };
 
@@ -98,7 +104,10 @@ public sealed class PopupViewModel : INotifyPropertyChanged
                 profile.Name,
                 profile.Displays.Count,
                 HotkeyDisplayText.Format(profile.DirectHotkey),
-                profile.Id == activeProfileId));
+                profile.Id == activeProfileId)
+            {
+                Monitors = LayoutSchematic.Build(profile),
+            });
         }
 
         CurrentState = Profiles.FirstOrDefault(profile => profile.IsActive)?.Name ?? "Custom";
@@ -139,6 +148,8 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUpdateAction)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRunUpdateAction)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UpdateActionText)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvailableUpdate)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanViewReleaseNotes)));
     }
 
     public void CompleteActivation(bool succeeded, string message, Guid? activeProfileId)
@@ -173,6 +184,7 @@ public sealed class PopupViewModel : INotifyPropertyChanged
         else if (propertyName == nameof(IsBusy))
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRunUpdateAction)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanViewReleaseNotes)));
         }
     }
 }

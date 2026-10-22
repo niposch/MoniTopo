@@ -32,6 +32,8 @@ The Windows tests construct CCD path/mode arrays, rollback files, EDID bytes, HD
 
 WPF startup smoke tests show and lay out the first-run, popup, and main windows on STA threads with fake configuration and update services. These tests catch invalid binding modes without invoking a display writer.
 
+Presentation tests also exercise single-key confirmation, realized hotkey labels/layout schematics, theme settings, shared icon decoding, and release notes independently of download/restart. To regenerate the committed multi-resolution icon after editing its geometry, run `./eng/Generate-AppIcon.ps1`; keep the source SVG and generator geometry in sync.
+
 CI enforces at least 85% line coverage for `MoniTopo.Core`. `eng/Test-CoreCoverage.ps1` reads the isolated Core Cobertura report. Windows and application coverage is retained as an artifact for review but is not used to hide platform or UI code behind exclusions.
 
 Recovery tests use synthetic payloads, isolated event/lease names, fake process handles, and fake native writers. They cover takeover, PID reuse, held leases, completion at the deadline, unsuccessful recovery, and pending-result reporting without terminating a real process or changing a display. Recovery has one writer lease per recovery root, not just per transaction. Never remove that ownership handshake to make a timeout test pass.

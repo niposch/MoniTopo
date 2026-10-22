@@ -12,6 +12,7 @@
         WindowStartupLocation="Manual"
         PreviewKeyDown="OnPreviewKeyDown"
         Deactivated="OnDeactivated"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibility" />
@@ -74,88 +75,95 @@
                     </ListBox.Style>
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <WrapPanel ItemWidth="114" ItemHeight="102" />
+                            <WrapPanel ItemWidth="114" ItemHeight="120" />
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Width" Value="114" />
-                            <Setter Property="Height" Value="102" />
+                            <Setter Property="Height" Value="120" />
                             <Setter Property="Padding" Value="4" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                            <Setter Property="BorderThickness" Value="1" />
+                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border Margin="3" Padding="{TemplateBinding Padding}" CornerRadius="5"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}">
+                                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <Setter Property="BorderThickness" Value="2" />
+                                </Trigger>
+                            </Style.Triggers>
                         </Style>
                     </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Border Padding="7,7,7,6"
-                                    CornerRadius="5"
-                                    ToolTip="{Binding Name}"
-                                    Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                    BorderThickness="1">
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="BorderBrush" Value="{DynamicResource SurfaceStrokeColorDefaultBrush}" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
-                                                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.AccentColorBrushKey}}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
-                                <Grid>
+                                <Grid ToolTip="{Binding AccessibleName}">
                                     <Grid.RowDefinitions>
-                                        <RowDefinition Height="38" />
+                                        <RowDefinition Height="52" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid HorizontalAlignment="Center" Width="48" Height="32">
-                                        <Border Width="31" Height="20"
-                                                HorizontalAlignment="Left"
-                                                VerticalAlignment="Top"
-                                                CornerRadius="2"
-                                                BorderThickness="2"
-                                                BorderBrush="{DynamicResource TextFillColorSecondaryBrush}" />
-                                        <Border Width="26" Height="17"
-                                                HorizontalAlignment="Right"
-                                                VerticalAlignment="Bottom"
-                                                CornerRadius="2"
-                                                BorderThickness="2"
-                                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                                BorderBrush="{DynamicResource TextFillColorPrimaryBrush}" />
-                                        <TextBlock Text="●"
-                                                   FontSize="8"
+                                    <Grid>
+                                        <ItemsControl ItemsSource="{Binding Monitors}" Width="90" Height="46" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><Canvas Width="90" Height="46" /></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="Canvas.Left" Value="{Binding Left}" />
+                                                    <Setter Property="Canvas.Top" Value="{Binding Top}" />
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Width="{Binding Width}" Height="{Binding Height}" CornerRadius="1.5"
+                                                            BorderThickness="{Binding StrokeThickness}"
+                                                            BorderBrush="{DynamicResource TextFillColorPrimaryBrush}"
+                                                            Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="✓"
+                                                   FontSize="11"
                                                    HorizontalAlignment="Right"
                                                    VerticalAlignment="Top"
-                                                   Foreground="{DynamicResource {x:Static SystemColors.AccentColorBrushKey}}"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                                    Visibility="{Binding IsActive, Converter={StaticResource BooleanToVisibility}}"
                                                    AutomationProperties.Name="Active profile" />
                                     </Grid>
                                     <TextBlock Grid.Row="1"
                                                Text="{Binding Name}"
                                                FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                                FontWeight="SemiBold"
                                                TextAlignment="Center"
                                                TextTrimming="CharacterEllipsis" />
-                                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
-                                        <TextBlock FontSize="10" Opacity="0.62">
-                                            <Run Text="{Binding DisplayCountText, Mode=OneWay}" />
-                                        </TextBlock>
-                                        <TextBlock Text=" · " FontSize="10" Opacity="0.45">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding HotkeyText}" Value="">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding HotkeyText}" FontSize="10" Opacity="0.62" />
-                                    </StackPanel>
+                                    <TextBlock Grid.Row="2" Text="{Binding HotkeyText}" FontSize="11" MinHeight="16" Margin="0,3,0,0"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextAlignment="Center"
+                                               TextWrapping="Wrap" />
                                 </Grid>
-                            </Border>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
@@ -168,34 +176,41 @@
                 <TextBlock Text="{Binding StatusMessage, Mode=OneWay}" TextWrapping="Wrap" />
             </Border>
 
-            <Button Grid.Row="3"
-                    HorizontalContentAlignment="Stretch"
-                    Padding="12,9"
-                    BorderThickness="0,1,0,1"
-                    IsEnabled="{Binding CanRunUpdateAction, Mode=OneWay}"
-                    Visibility="{Binding ShowUpdateAction, Mode=OneWay, Converter={StaticResource BooleanToVisibility}}"
-                    Click="OnUpdateClick"
-                    AutomationProperties.Name="Update MoniTopo">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="22" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="!" FontWeight="Bold" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding UpdateActionText, Mode=OneWay}"
-                               TextTrimming="CharacterEllipsis"
-                               VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="2" Text="›" FontSize="18" Margin="8,0,0,0" VerticalAlignment="Center" />
-                </Grid>
-            </Button>
+            <Grid x:Name="UpdateActions" Grid.Row="3" Margin="12,0,12,0"
+                  Visibility="{Binding ShowUpdateAction, Mode=OneWay, Converter={StaticResource BooleanToVisibility}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Content="Release notes" Padding="9,7" Margin="0,0,8,0" VerticalAlignment="Stretch"
+                        IsEnabled="{Binding CanViewReleaseNotes, Mode=OneWay}"
+                        Click="OnReleaseNotesClick" AutomationProperties.Name="View release notes" />
+                <Button Grid.Column="1" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                        Padding="9,7"
+                        IsEnabled="{Binding CanRunUpdateAction, Mode=OneWay}"
+                        Click="OnUpdateClick"
+                        AutomationProperties.Name="Update MoniTopo">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="22" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="!" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding UpdateActionText, Mode=OneWay}"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Text="›" FontSize="18" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </Grid>
+                </Button>
+            </Grid>
 
             <Grid Grid.Row="4" Margin="12,6,7,7">
-                <TextBlock Text="{Binding VersionText, Mode=OneWay}"
-                           VerticalAlignment="Center"
-                           FontSize="10"
-                           Opacity="0.45" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="MoniTopo" FontSize="10" Margin="0,0,7,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding VersionText, Mode=OneWay}" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
                 <Button x:Name="OpenMainWindowButton"
                         Content="&#xE713;"
                         FontFamily="Segoe Fluent Icons"
